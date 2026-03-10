@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Edit Agent</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <header>
+        <h1>Video Edit Agent</h1>
+        <p>Upload and edit videos using natural language</p>
+    </header>
+
+    <main>
+        <section id="create-section">
+            <h2>Create Project</h2>
+            <form id="create-form">
+                <input type="text" id="project-id-input" placeholder="Project ID (e.g. my-project)" required>
+                <select id="aspect-ratio-input">
+                    <option value="">Aspect ratio (optional)</option>
+                    <option value="16:9">16:9</option>
+                    <option value="9:16">9:16</option>
+                    <option value="1:1">1:1</option>
+                    <option value="4:3">4:3</option>
+                </select>
+                <input type="text" id="language-input" placeholder="Language (e.g. en)" maxlength="10">
+                <button type="submit">Create</button>
+            </form>
+            <div id="create-status" class="status" hidden></div>
+        </section>
+
+        <section id="projects-section">
+            <h2>Projects</h2>
+            <div id="project-list" class="project-grid"></div>
+        </section>
+
+        <section id="project-detail" hidden>
+            <h2>Project: <span id="detail-project-id"></span></h2>
+            <div id="project-meta"></div>
+
+            <h3>Upload Assets</h3>
+            <form id="upload-form">
+                <input type="file" id="file-input" accept="video/*,audio/*,image/*,.txt,.srt,.vtt,.ass,.sub,.ssa" multiple required>
+                <button type="submit">Upload</button>
+            </form>
+            <div id="upload-status" class="status" hidden></div>
+
+            <h3>Assets</h3>
+            <div id="asset-list"></div>
+
+            <h3>Timeline</h3>
+            <pre id="timeline-view" class="json-view"></pre>
+
+            <h3>Edit with Natural Language</h3>
+            <form id="edit-form">
+                <textarea id="edit-prompt" placeholder="Describe your edit (e.g., 'trim the first clip to 5 seconds')" rows="3" required></textarea>
+                <button type="submit">Submit Edit</button>
+            </form>
+            <div id="edit-status" class="status" hidden></div>
+
+            <h3>Edit Jobs</h3>
+            <ul id="job-list"></ul>
+        </section>
+    </main>
+
+    <script src="/js/app.js"></script>
+</body>
+</html>

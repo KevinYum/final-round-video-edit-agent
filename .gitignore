@@ -1,0 +1,32 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+*.egg-info/
+dist/
+build/
+
+# Storage
+storage/videos/*
+storage/assets/*
+storage/*.db
+!storage/.gitkeep
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test files (binary samples for manual testing)
+test_files/
+
+# Environment
+.env
+
+# uv
+uv.lock

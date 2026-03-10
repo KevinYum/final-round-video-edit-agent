@@ -1,0 +1,26 @@
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
+
+from backend.database import engine
+from backend.models import Base
+from backend.routers import projects
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    yield
+
+
+app = FastAPI(
+    title="Video Edit Agent",
+    description="Upload and edit videos using natural language",
+    version="0.2.0",
+    lifespan=lifespan,
+)
+
+app.include_router(projects.router)
+app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")

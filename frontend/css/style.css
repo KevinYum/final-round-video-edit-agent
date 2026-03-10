@@ -1,0 +1,298 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #0f0f0f;
+    color: #e0e0e0;
+    min-height: 100vh;
+}
+
+header {
+    background: #1a1a2e;
+    padding: 2rem;
+    text-align: center;
+    border-bottom: 2px solid #6c63ff;
+}
+
+header h1 {
+    color: #6c63ff;
+    font-size: 1.8rem;
+}
+
+header p {
+    color: #888;
+    margin-top: 0.5rem;
+}
+
+main {
+    max-width: 900px;
+    margin: 2rem auto;
+    padding: 0 1rem;
+}
+
+section {
+    background: #1a1a1a;
+    border-radius: 8px;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+    border: 1px solid #333;
+}
+
+h2 {
+    color: #6c63ff;
+    margin-bottom: 1rem;
+    font-size: 1.2rem;
+}
+
+h3 {
+    color: #aaa;
+    margin: 1rem 0 0.5rem;
+    font-size: 1rem;
+}
+
+form {
+    display: flex;
+    gap: 0.75rem;
+    align-items: flex-start;
+    flex-wrap: wrap;
+}
+
+#create-form {
+    align-items: center;
+}
+
+#upload-form {
+    align-items: center;
+}
+
+input[type="text"],
+input[type="file"],
+select {
+    padding: 0.5rem;
+    background: #222;
+    border: 1px solid #444;
+    border-radius: 4px;
+    color: #e0e0e0;
+}
+
+input[type="text"] {
+    flex: 1;
+    min-width: 150px;
+}
+
+input[type="file"] {
+    flex: 1;
+}
+
+select {
+    min-width: 120px;
+}
+
+textarea {
+    flex: 1;
+    padding: 0.75rem;
+    background: #222;
+    border: 1px solid #444;
+    border-radius: 4px;
+    color: #e0e0e0;
+    resize: vertical;
+    font-family: inherit;
+}
+
+button {
+    padding: 0.6rem 1.5rem;
+    background: #6c63ff;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+button:hover {
+    background: #5a52d5;
+}
+
+button:disabled {
+    background: #444;
+    cursor: not-allowed;
+}
+
+.status {
+    margin-top: 0.75rem;
+    padding: 0.75rem;
+    border-radius: 4px;
+    font-size: 0.9rem;
+    width: 100%;
+}
+
+.status.success {
+    background: #1a3a1a;
+    border: 1px solid #2d5a2d;
+    color: #6fcf6f;
+}
+
+.status.error {
+    background: #3a1a1a;
+    border: 1px solid #5a2d2d;
+    color: #cf6f6f;
+}
+
+.status.info {
+    background: #1a1a3a;
+    border: 1px solid #2d2d5a;
+    color: #6f6fcf;
+}
+
+.project-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    gap: 1rem;
+}
+
+.project-card {
+    background: #222;
+    border: 1px solid #333;
+    border-radius: 6px;
+    padding: 1rem;
+    cursor: pointer;
+    transition: border-color 0.2s;
+}
+
+.project-card:hover {
+    border-color: #6c63ff;
+}
+
+.project-card .name {
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+    color: #fff;
+}
+
+.meta {
+    color: #888;
+    font-size: 0.85rem;
+}
+
+.asset-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+}
+
+.asset-table th {
+    text-align: left;
+    color: #888;
+    padding: 0.5rem;
+    border-bottom: 1px solid #444;
+    font-weight: 500;
+}
+
+.asset-table td {
+    padding: 0.5rem;
+    border-bottom: 1px solid #2a2a2a;
+}
+
+.asset-table a {
+    color: #6c63ff;
+    text-decoration: none;
+}
+
+.asset-table a:hover {
+    text-decoration: underline;
+}
+
+.badge {
+    display: inline-block;
+    padding: 0.15rem 0.5rem;
+    border-radius: 3px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.badge-video {
+    background: #1a2a4a;
+    color: #6fa8ff;
+}
+
+.badge-audio {
+    background: #2a1a4a;
+    color: #b06fff;
+}
+
+.badge-image {
+    background: #1a4a2a;
+    color: #6fff8f;
+}
+
+.badge-subtitle {
+    background: #4a4a1a;
+    color: #cfcf6f;
+}
+
+.badge-pending {
+    background: #4a3a1a;
+    color: #ffc46f;
+}
+
+.badge-processing {
+    background: #1a2a4a;
+    color: #6fa8ff;
+}
+
+.badge-completed {
+    background: #1a3a1a;
+    color: #6fcf6f;
+}
+
+.badge-failed {
+    background: #3a1a1a;
+    color: #cf6f6f;
+}
+
+.json-view {
+    background: #111;
+    border: 1px solid #333;
+    border-radius: 4px;
+    padding: 1rem;
+    font-family: "SF Mono", Monaco, Consolas, monospace;
+    font-size: 0.8rem;
+    overflow-x: auto;
+    max-height: 300px;
+    overflow-y: auto;
+    color: #aaa;
+}
+
+#job-list {
+    list-style: none;
+}
+
+#job-list li {
+    padding: 0.5rem 0;
+    border-bottom: 1px solid #333;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+#job-list li:last-child {
+    border-bottom: none;
+}
+
+.job-prompt {
+    color: #ccc;
+    font-size: 0.9rem;
+}
+
+.empty-state {
+    text-align: center;
+    color: #666;
+    padding: 2rem;
+}

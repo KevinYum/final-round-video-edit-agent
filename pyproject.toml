@@ -1,0 +1,27 @@
+[project]
+name = "video-edit-agent"
+version = "0.4.0"
+description = "A video editing agent that allows users to upload and edit videos using natural language"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.34.0",
+    "sqlalchemy[asyncio]>=2.0.0",
+    "aiosqlite>=0.20.0",
+    "python-multipart>=0.0.18",
+    "pydantic>=2.0.0",
+    "aiofiles>=24.1.0",
+    "python-dotenv>=1.0.0",
+    "moviepy>=2.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "httpx>=0.28.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
