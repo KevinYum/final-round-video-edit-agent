@@ -31,6 +31,11 @@ class Project(Base):
         cascade="all, delete-orphan",
         order_by="ProjectEditJob.created_at.desc()",
     )
+    versions: Mapped[list["ProjectVersion"]] = relationship(
+        back_populates="project",
+        cascade="all, delete-orphan",
+        order_by="ProjectVersion.version_number",
+    )
 
 
 class Asset(Base):

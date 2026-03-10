@@ -1,6 +1,6 @@
 [project]
 name = "video-edit-agent"
-version = "0.4.0"
+version = "0.6.4"
 description = "A video editing agent that allows users to upload and edit videos using natural language"
 requires-python = ">=3.13"
 dependencies = [
@@ -13,6 +13,8 @@ dependencies = [
     "aiofiles>=24.1.0",
     "python-dotenv>=1.0.0",
     "moviepy>=2.0.0",
+    "langchain>=0.3.0",
+    "langchain-openai>=0.3.0",
 ]
 
 [dependency-groups]

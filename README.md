@@ -31,19 +31,32 @@ video-edit-agent/
 ├── backend/                   # FastAPI backend
 │   ├── __init__.py
 │   ├── main.py                # App entrypoint, lifespan, mounts
+│   ├── config.py              # Environment config (.env loading)
 │   ├── database.py            # SQLite async engine, session factory, path constants
-│   ├── schemas.py             # Pydantic request/response models
 │   ├── models/                # SQLAlchemy ORM models
 │   │   ├── __init__.py
 │   │   ├── base.py            # Shared DeclarativeBase
-│   │   └── project.py         # Project, Asset, ProjectEditJob tables
+│   │   ├── project.py         # Project, Asset, ProjectEditJob tables
+│   │   └── version.py         # ProjectVersion, ConversationMessage tables
+│   ├── schemas/               # Pydantic request/response models
+│   │   ├── __init__.py        # Re-exports all schemas
+│   │   ├── project.py         # Project, Asset, Timeline, EditJob schemas
+│   │   ├── chat.py            # ChatRequest, ChatResponse, EditPlan, ToolStep
+│   │   └── version.py         # VersionOut, VersionDetailOut, RevertRequest
 │   ├── routers/               # API route handlers
 │   │   ├── __init__.py
-│   │   └── projects.py        # /api/projects/* endpoints
+│   │   ├── projects.py        # /api/projects/* endpoints
+│   │   ├── chat.py            # /api/projects/{id}/chat endpoint
+│   │   └── versions.py        # /api/projects/{id}/versions/* endpoints
 │   └── services/              # Business logic
 │       ├── __init__.py
-│       ├── metadata.py        # Asset type classification + metadata extraction
-│       └── timeline.py        # Timeline creation, mock transcript, auto-populate
+│       ├── metadata.py        # Asset type classification + MoviePy metadata extraction
+│       ├── timeline.py        # Timeline creation, auto-populate clips
+│       ├── tools.py           # 11 edit tool definitions (descriptors)
+│       ├── llm.py             # LangChain + OpenAI LLM integration
+│       ├── chat.py            # Chat orchestrator service
+│       ├── execute.py         # Execute service (apply edit plan, create version)
+│       └── version.py         # Version management (list, detail, revert)
 │
 ├── frontend/                  # Simple web UI (static files)
 │   ├── index.html             # Main page (project workflow)
@@ -54,7 +67,11 @@ video-edit-agent/
 │
 ├── tests/                     # Test suite
 │   ├── __init__.py
-│   └── test_projects_api.py   # Project API integration tests
+│   ├── conftest.py            # Shared test DB setup (in-memory SQLite)
+│   ├── test_projects_api.py   # Project API integration tests (23 tests)
+│   ├── test_chat_api.py       # Chat + execute endpoint tests with mocked LLM (13 tests)
+│   ├── test_versions_api.py   # Version endpoint tests (8 tests)
+│   └── test_tools.py          # Tool definition + validation tests (12 tests)
 │
 └── storage/                   # Runtime data (git-ignored)
     ├── .gitkeep
@@ -65,70 +82,15 @@ video-edit-agent/
 
 ## Agent Loop Design
 
-The video edit agent follows a project-centric create-ingest-edit loop:
+The agent follows a create → ingest → chat loop:
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        USER INTERFACE                           │
-│  Browser / API ──── Create Project / Upload Assets / Edit       │
-└───────┬──────────────────┬────────────────────┬─────────────────┘
-        │                  │                    │
-        ▼                  ▼                    ▼
-┌───────────────┐  ┌───────────────┐  ┌─────────────────────────┐
-│ CREATE PROJECT│  │ LOAD ASSETS   │  │ EDIT (NL Command)       │
-│               │  │               │  │                         │
-│ 1. project_id │  │ 1. Upload     │  │ 1. User types command   │
-│ 2. aspect     │  │    files      │  │ 2. Job created with     │
-│    ratio      │  │ 2. Classify   │  │    timeline_before      │
-│ 3. language   │  │    type       │  │ 3. Agent parses intent  │
-│ 4. transcript │  │ 3. Extract    │  │ 4. Maps to FFmpeg ops   │
-│    (mocked)   │  │    metadata   │  │ 5. Executes processing  │
-│ 5. Empty      │  │ 4. Store file │  │ 6. Timeline updated     │
-│    timeline   │  │ 5. Auto-add   │  │ 7. Job → completed      │
-│               │  │    to timeline│  │                         │
-└───────────────┘  └───────────────┘  └─────────────────────────┘
-        │                  │                    │
-        └──────────────────┴────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    PROJECT STATE (SQLite + Filesystem)           │
-│                                                                 │
-│  ┌──────────────────┐    ┌──────────────────────────────────┐   │
-│  │ projects         │    │ Timeline (JSON on project)       │   │
-│  │  - id (string)   │    │  ┌─────────────────────────────┐ │   │
-│  │  - aspect_ratio  │    │  │ clips: [                    │ │   │
-│  │  - language      │──▶ │  │   {asset_id, asset_name,    │ │   │
-│  │  - timeline{}    │    │  │    source_in, source_out,    │ │   │
-│  │  - transcript{}  │    │  │    timeline_start}           │ │   │
-│  └──────────────────┘    │  │ ]                            │ │   │
-│         │ 1:N            │  │ total_duration: 25.0         │ │   │
-│         ▼                │  └─────────────────────────────┘ │   │
-│  ┌──────────────────┐    └──────────────────────────────────┘   │
-│  │ assets           │                                           │
-│  │  - id (UUID)     │    ┌──────────────────────────────────┐   │
-│  │  - type          │    │ storage/assets/{project_id}/     │   │
-│  │  - metadata      │───▶│   {asset_id}.mp4                │   │
-│  │  - file_path     │    │   {asset_id}.png                │   │
-│  └──────────────────┘    └──────────────────────────────────┘   │
-│         │ N:1                                                   │
-│  ┌──────────────────┐                                           │
-│  │ edit_jobs        │    Status: pending → processing           │
-│  │  - prompt        │                → completed / failed       │
-│  │  - timeline_before│   Each job snapshots timeline state      │
-│  │  - timeline_after │                                          │
-│  └──────────────────┘                                           │
-└─────────────────────────────────────────────────────────────────┘
+1. **Create Project** — User provides project_id, aspect ratio, language. An empty timeline is initialized.
+2. **Load Assets** — Upload video/audio/image files. Each asset is classified, metadata extracted (MoviePy/Pillow), and a clip is appended to the timeline with source in/out points.
+3. **Conversational Edit** — User sends natural language edit requests via `POST /chat`. The LLM (OpenAI via LangChain) receives the full project context (timeline, assets, 11 available edit tools) and returns a structured edit plan with exact tool parameters, or asks clarifying questions if the request is ambiguous.
+4. **Execute Plan** — When the user is satisfied with the plan, clicking Execute (`POST /execute`) creates a new version with a timeline snapshot. Actual tool execution (MoviePy calls) will be added in a future version.
+5. **Version Management** — Users can list versions, inspect conversation history per version, and revert to any previous version.
 
-Agent Processing Pipeline (future):
-┌──────────┐   ┌───────────┐   ┌──────────┐   ┌──────────────┐
-│  Parse   │──▶│  Plan     │──▶│ Execute  │──▶│  Update      │
-│  NL Cmd  │   │  FFmpeg   │   │  FFmpeg  │   │  Timeline    │
-│          │   │  Ops      │   │  Cmds    │   │  & State     │
-└──────────┘   └───────────┘   └──────────┘   └──────────────┘
-  "trim 5s"     -ss 5 -i ...    subprocess      timeline{}
-                                 .run()          → SQLite
-```
+Edit tools span 4 categories: trim/cut/delete, reorder/insert/replace, text overlays/titles/subtitles, and aspect ratio/crop/reframe. Currently plan generation only — tool execution is planned for a future version.
 
 ## API Endpoints
 
@@ -144,6 +106,11 @@ Agent Processing Pipeline (future):
 | `GET` | `/api/projects/{id}/timeline` | Get current timeline |
 | `POST` | `/api/projects/{id}/edit` | Submit NL edit command |
 | `GET` | `/api/projects/{id}/jobs` | List edit jobs |
+| `POST` | `/api/projects/{id}/chat` | Conversational edit (LLM planning) |
+| `POST` | `/api/projects/{id}/execute` | Execute the current edit plan |
+| `GET` | `/api/projects/{id}/versions` | List timeline versions |
+| `GET` | `/api/projects/{id}/versions/{num}` | Get version detail with messages |
+| `POST` | `/api/projects/{id}/versions/revert` | Revert to previous version |
 
 ## Tech Stack
 
@@ -152,5 +119,6 @@ Agent Processing Pipeline (future):
 - **Backend**: FastAPI + Uvicorn
 - **Database**: SQLite (aiosqlite + SQLAlchemy async)
 - **Frontend**: Vanilla HTML/CSS/JS
-- **Metadata**: FFmpeg/ffprobe (optional), Pillow (optional)
-- **Video Processing**: FFmpeg (planned)
+- **Metadata**: MoviePy, Pillow
+- **LLM**: LangChain + OpenAI (conversational edit planning)
+- **Video Processing**: MoviePy (planned execution)

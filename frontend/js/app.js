@@ -1,6 +1,7 @@
 const API = "/api/projects";
 
 let currentProjectId = null;
+let currentVersionNumber = null;
 
 // ── Projects ────────────────────────────────────────────────────────
 
@@ -44,7 +45,7 @@ async function selectProject(projectId) {
 
     renderAssets(project.assets);
     renderTimeline(project.timeline);
-    await loadJobs(projectId);
+    await loadChatHistory(projectId);
 
     document.getElementById("project-detail").scrollIntoView({ behavior: "smooth" });
 }
@@ -56,8 +57,9 @@ function renderAssets(assets) {
         return;
     }
     el.innerHTML = `<table class="asset-table">
-        <thead><tr><th>Type</th><th>Filename</th><th>Format</th><th>Duration</th><th>Resolution</th><th>Size</th><th></th></tr></thead>
+        <thead><tr><th>Asset ID</th><th>Type</th><th>Filename</th><th>Format</th><th>Duration</th><th>Resolution</th><th>Size</th><th></th></tr></thead>
         <tbody>${assets.map((a) => `<tr>
+            <td><code class="id-cell">${escapeHtml(a.id.slice(0, 8))}</code></td>
             <td><span class="badge badge-${a.asset_type}">${a.asset_type}</span></td>
             <td>${escapeHtml(a.original_filename)}</td>
             <td>${a.format || "-"}</td>
@@ -84,7 +86,7 @@ function renderTimeline(timeline) {
             ? `${clip.transcript.segments ? clip.transcript.segments.length : 0} seg(s)`
             : '<span class="meta">none</span>';
         return `<tr>
-            <td>${i + 1}</td>
+            <td><code class="id-cell">${escapeHtml(clip.id)}</code></td>
             <td><span class="badge badge-${clip.asset_type || "video"}">${clip.asset_type || "video"}</span></td>
             <td>${escapeHtml(clip.asset_name || clip.asset_id.slice(0, 8))}</td>
             <td>${res}</td>
@@ -96,28 +98,99 @@ function renderTimeline(timeline) {
     });
 
     el.innerHTML = `<table class="asset-table">
-        <thead><tr><th>#</th><th>Type</th><th>Source Clip</th><th>Resolution</th><th>Source In/Out</th><th>Timeline Position</th><th>Duration</th><th>Transcript</th></tr></thead>
+        <thead><tr><th>Clip ID</th><th>Type</th><th>Source</th><th>Resolution</th><th>Source In/Out</th><th>Timeline Position</th><th>Duration</th><th>Transcript</th></tr></thead>
         <tbody>${rows.join("")}</tbody>
     </table>
     <p class="meta" style="margin-top:0.5rem">Total output duration: ${formatTime(timeline.total_duration)}</p>`;
 }
 
-async function loadJobs(projectId) {
-    const res = await fetch(`${API}/${projectId}/jobs`);
-    const jobs = await res.json();
-    const el = document.getElementById("job-list");
-    if (jobs.length === 0) {
-        el.innerHTML = "<li>No edit jobs yet.</li>";
+async function loadChatHistory(projectId) {
+    const badge = document.getElementById("chat-version-badge");
+    const messagesEl = document.getElementById("chat-messages");
+    const planBox = document.getElementById("plan-box");
+
+    // Get versions to find current
+    const vRes = await fetch(`${API}/${projectId}/versions`);
+    const versions = await vRes.json();
+    const current = versions.find((v) => v.is_current);
+
+    if (!current) {
+        currentVersionNumber = null;
+        badge.hidden = true;
+        messagesEl.innerHTML = '<p class="empty-state">Send a message to start editing with AI.</p>';
+        planBox.innerHTML = '<p class="empty-state">No plan yet. Chat to generate one.</p>';
         return;
     }
-    el.innerHTML = jobs
-        .map(
-            (j) => `<li>
-            <span class="job-prompt">#${j.id}: ${escapeHtml(j.prompt)}</span>
-            <span class="badge badge-${j.status}">${j.status}</span>
-        </li>`
-        )
+
+    currentVersionNumber = current.version_number;
+    badge.textContent = `v${current.version_number}`;
+    badge.hidden = false;
+
+    // Get version detail with messages
+    const dRes = await fetch(`${API}/${projectId}/versions/${current.version_number}`);
+    const detail = await dRes.json();
+
+    if (!detail.messages || detail.messages.length === 0) {
+        messagesEl.innerHTML = '<p class="empty-state">Send a message to start editing with AI.</p>';
+        planBox.innerHTML = '<p class="empty-state">No plan yet. Chat to generate one.</p>';
+        return;
+    }
+
+    renderChatMessages(detail.messages);
+    renderLatestPlan(detail.messages);
+}
+
+function renderChatMessages(messages) {
+    const el = document.getElementById("chat-messages");
+    el.innerHTML = messages
+        .map((m) => {
+            if (m.role === "user") {
+                return `<div class="chat-bubble chat-user"><div class="chat-role">You</div><div class="chat-text">${escapeHtml(m.content)}</div></div>`;
+            }
+            let html = `<div class="chat-bubble chat-assistant"><div class="chat-role">Assistant</div><div class="chat-text">${escapeHtml(m.content)}</div>`;
+            if (m.needs_clarification) {
+                html += `<div class="chat-clarification">Needs more information to proceed.</div>`;
+            }
+            html += `</div>`;
+            return html;
+        })
         .join("");
+    el.scrollTop = el.scrollHeight;
+}
+
+function renderLatestPlan(messages) {
+    const planBox = document.getElementById("plan-box");
+
+    // Find the latest assistant message with an edit plan
+    let latestPlan = null;
+    for (let i = messages.length - 1; i >= 0; i--) {
+        const m = messages[i];
+        if (m.role === "assistant" && m.edit_plan && m.edit_plan.steps && m.edit_plan.steps.length > 0 && !m.needs_clarification) {
+            latestPlan = m.edit_plan;
+            break;
+        }
+    }
+
+    if (!latestPlan) {
+        planBox.innerHTML = '<p class="empty-state">No plan yet. Chat to generate one.</p>';
+        return;
+    }
+
+    renderPlanBox(latestPlan);
+}
+
+function renderPlanBox(plan) {
+    const planBox = document.getElementById("plan-box");
+    let html = `<ol class="plan-steps">`;
+    for (const step of plan.steps) {
+        const paramsStr = Object.entries(step.params)
+            .map(([k, v]) => `<span class="step-param-key">${escapeHtml(k)}</span>=${escapeHtml(JSON.stringify(v))}`)
+            .join(", ");
+        html += `<li><span class="step-tool">${escapeHtml(step.tool_name)}</span>(<span class="step-params">${paramsStr}</span>)</li>`;
+    }
+    html += `</ol>`;
+    html += `<button id="execute-btn" class="execute-btn" onclick="executePlan()">Execute Plan</button>`;
+    planBox.innerHTML = html;
 }
 
 // ── Create Project ──────────────────────────────────────────────────
@@ -194,38 +267,115 @@ document.getElementById("upload-form").addEventListener("submit", async (e) => {
     }
 });
 
-// ── Submit Edit ─────────────────────────────────────────────────────
+// ── Chat ────────────────────────────────────────────────────────────
 
-document.getElementById("edit-form").addEventListener("submit", async (e) => {
+document.getElementById("chat-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     if (!currentProjectId) return;
 
-    const prompt = document.getElementById("edit-prompt").value.trim();
-    if (!prompt) return;
+    const input = document.getElementById("chat-input");
+    const message = input.value.trim();
+    if (!message) return;
 
-    const status = document.getElementById("edit-status");
-    status.hidden = false;
-    status.className = "status info";
-    status.textContent = "Submitting edit job...";
+    const sendBtn = document.getElementById("chat-send-btn");
+    const messagesEl = document.getElementById("chat-messages");
+
+    // Clear empty state if present
+    const emptyState = messagesEl.querySelector(".empty-state");
+    if (emptyState) emptyState.remove();
+
+    // Append user bubble immediately
+    messagesEl.insertAdjacentHTML(
+        "beforeend",
+        `<div class="chat-bubble chat-user"><div class="chat-role">You</div><div class="chat-text">${escapeHtml(message)}</div></div>`
+    );
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+
+    input.value = "";
+    sendBtn.disabled = true;
+    sendBtn.textContent = "Thinking...";
 
     try {
-        const res = await fetch(`${API}/${currentProjectId}/edit`, {
+        const res = await fetch(`${API}/${currentProjectId}/chat`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ prompt }),
+            body: JSON.stringify({ message }),
         });
-        if (!res.ok) throw new Error(await extractError(res, "Edit failed"));
+        if (!res.ok) throw new Error(await extractError(res, "Chat failed"));
 
-        const job = await res.json();
-        status.className = "status success";
-        status.textContent = `Edit job #${job.id} created (status: ${job.status})`;
-        document.getElementById("edit-prompt").value = "";
-        await loadJobs(currentProjectId);
+        const data = await res.json();
+
+        // Update version badge
+        currentVersionNumber = data.version_number;
+        const badge = document.getElementById("chat-version-badge");
+        badge.textContent = `v${data.version_number}`;
+        badge.hidden = false;
+
+        // Render assistant response in chat (text only, no plan inline)
+        let html = `<div class="chat-bubble chat-assistant"><div class="chat-role">Assistant</div><div class="chat-text">${escapeHtml(data.assistant_message)}</div>`;
+        if (data.needs_clarification) {
+            html += `<div class="chat-clarification">Needs more information to proceed.</div>`;
+        }
+        html += `</div>`;
+        messagesEl.insertAdjacentHTML("beforeend", html);
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+
+        // Update plan box separately
+        if (data.edit_plan && data.edit_plan.steps && data.edit_plan.steps.length > 0 && !data.needs_clarification) {
+            renderPlanBox(data.edit_plan);
+        }
     } catch (err) {
-        status.className = "status error";
-        status.textContent = `Error: ${err.message}`;
+        messagesEl.insertAdjacentHTML(
+            "beforeend",
+            `<div class="chat-bubble chat-error"><div class="chat-text">Error: ${escapeHtml(err.message)}</div></div>`
+        );
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+    } finally {
+        sendBtn.disabled = false;
+        sendBtn.textContent = "Send";
     }
 });
+
+// ── Execute Plan ────────────────────────────────────────────────────
+
+async function executePlan() {
+    if (!currentProjectId) return;
+
+    const executeBtn = document.getElementById("execute-btn");
+    if (executeBtn) {
+        executeBtn.disabled = true;
+        executeBtn.textContent = "Executing...";
+    }
+
+    try {
+        const res = await fetch(`${API}/${currentProjectId}/execute`, {
+            method: "POST",
+        });
+        if (!res.ok) throw new Error(await extractError(res, "Execute failed"));
+
+        const data = await res.json();
+
+        // Refresh timeline and version info
+        if (data.timeline) {
+            renderTimeline(data.timeline);
+        }
+        currentVersionNumber = data.version_number;
+        const badge = document.getElementById("chat-version-badge");
+        badge.textContent = `v${data.version_number}`;
+
+        // Update plan box to show executed state
+        const planBox = document.getElementById("plan-box");
+        planBox.innerHTML = `<div class="plan-executed">Plan executed. Version ${data.version_number} created.</div>`;
+    } catch (err) {
+        const planBox = document.getElementById("plan-box");
+        planBox.insertAdjacentHTML("beforeend", `<div class="plan-error">Error: ${escapeHtml(err.message)}</div>`);
+    } finally {
+        if (executeBtn) {
+            executeBtn.disabled = false;
+            executeBtn.textContent = "Execute Plan";
+        }
+    }
+}
 
 // ── Helpers ─────────────────────────────────────────────────────────
 

@@ -10,6 +10,7 @@ A FastAPI-based video editing agent that allows users to create projects, upload
 - **Database**: SQLite (via aiosqlite + SQLAlchemy async)
 - **Media Processing**: MoviePy (metadata extraction, future editing)
 - **Image Metadata**: Pillow
+- **LLM**: LangChain + OpenAI (conversational edit planning)
 - **Config**: python-dotenv (`.env` / `.env.example`)
 - **Storage**: Local filesystem (`./storage/assets/{project_id}/`)
 
@@ -69,11 +70,18 @@ Every user request must be logged in `INSTRUCTIONS.md` with:
 | `GET` | `/api/projects/{project_id}/timeline` | Get current timeline |
 | `POST` | `/api/projects/{project_id}/edit` | Submit NL edit (creates job) |
 | `GET` | `/api/projects/{project_id}/jobs` | List edit jobs |
+| `POST` | `/api/projects/{project_id}/chat` | Conversational edit (LLM planning) |
+| `POST` | `/api/projects/{project_id}/execute` | Execute the current edit plan |
+| `GET` | `/api/projects/{project_id}/versions` | List timeline versions |
+| `GET` | `/api/projects/{project_id}/versions/{num}` | Get version detail with messages |
+| `POST` | `/api/projects/{project_id}/versions/revert` | Revert to a previous version |
 
 ### Database Schema (SQLite)
 - **projects**: id (string PK), target_aspect_ratio, language, timeline (JSON), transcript (JSON), status, created_at, updated_at
 - **assets**: id (UUID string PK), project_id (FK), asset_type, original_filename, file_path, duration_seconds, width, height, format, file_size_bytes, metadata_extra (JSON), created_at
 - **project_edit_jobs**: id, project_id (FK), prompt, status, timeline_before (JSON), timeline_after (JSON), error_message, created_at, completed_at
+- **project_versions**: id, project_id (FK), version_number, timeline_snapshot (JSON), is_current (bool), created_at
+- **conversation_messages**: id, version_id (FK), role, content, edit_plan (JSON), needs_clarification (bool), sequence_number, created_at
 
 ### Timeline JSON Structure (Clip-Sequence Model)
 The timeline represents the final output as an ordered list of clips. Each clip references a source asset with in/out points and a position on the output timeline.
@@ -129,10 +137,60 @@ The timeline represents the final output as an ordered list of clips. Each clip 
 - Subtitles are excluded from clips (they are metadata, not media)
 - Project starts with empty timeline and `transcript: null` (no mocked data)
 
-### Agent Loop Design
+### Conversational Edit Flow
 1. User creates a project with `create_project()`
 2. User uploads assets with `load_assets()` — metadata extracted, timeline auto-populated
-3. User submits natural language edit command
-4. Job is created with `timeline_before` snapshot, status "pending"
-5. Worker processes edit (maps NL to FFmpeg ops), updates timeline
-6. Job completed with `timeline_after`, project timeline updated
+3. User sends natural language edit via chat dialog → `POST /chat` (planning only)
+4. LLM receives project context (timeline, assets, 11 available tools) and conversation history
+5. LLM returns: `assistant_message`, `edit_plan` (strictly executable tool steps), `needs_clarification`
+6. Plan is validated against tool definitions (tool names, required params, no unknown params)
+7. If validation fails or `needs_clarification=true`: plan is rejected, user gets error details or follow-up questions
+8. Edit plan displayed in separate plan box on UI with an "Execute" button
+9. User reviews plan and clicks Execute → `POST /execute` → new version created with timeline snapshot
+10. User can revert to any previous version via `POST /versions/revert`
+
+### Edit Plan Structure (Strictly Executable)
+Each plan step is directly executable as `tool_name(**params)`:
+```json
+{
+  "steps": [
+    {"step_number": 1, "tool_name": "trim_clip", "params": {"clip_id": "clip-abc", "new_in": 0.0, "new_out": 5.0}}
+  ],
+  "summary": "Trim first clip to 5 seconds"
+}
+```
+- `params` uses exact parameter names from tool definitions
+- Values are concrete (actual clip IDs, asset IDs, numeric values)
+- Steps are executed sequentially (MoviePy execution planned for future version)
+
+### Plan Validation
+After the LLM returns a plan, `validate_plan()` in `tools.py` checks:
+- Each step's `tool_name` exists in the 11 tool definitions
+- All required params for that tool are present
+- No unknown params are passed
+
+If validation fails, the plan is rejected: `edit_plan` is set to `null`, `needs_clarification` is set to `true`, and the validation errors are appended to the assistant message. This ensures only valid, executable plans reach the Execute button.
+
+### Conversation History (LLM Context)
+When calling the LLM, the full conversation history is sent including:
+- User messages (plain text)
+- Assistant messages reconstructed as JSON with `assistant_message`, `edit_plan`, and `needs_clarification`
+
+This allows the LLM to see its own prior plans and iterate on them based on user feedback.
+
+### Frontend Layout
+- Chat and Plan are side-by-side in a two-column layout
+- **Chat** (left): conversation history with user/assistant bubbles, text input
+- **Plan** (right): current edit plan with tool steps, params, and Execute button
+- Plan box updates when LLM returns a ready plan; Execute button creates a new version
+
+### Available Edit Tools (11)
+- **Trim/Cut**: `trim_clip`, `split_clip`, `delete_clip`
+- **Reorder**: `reorder_clips`, `insert_clip`, `replace_clip`
+- **Text**: `add_text_overlay`, `add_title_card`, `add_subtitles`
+- **Aspect**: `change_aspect_ratio`, `crop_clip`
+
+### Version System
+- Each project has versions (timeline snapshots) created when user executes a plan via `POST /execute`
+- Conversation messages are scoped to the current version session
+- Reverting restores the project timeline to a previous snapshot

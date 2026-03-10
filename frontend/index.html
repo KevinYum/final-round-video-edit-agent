@@ -52,15 +52,26 @@
             <h3>Timeline</h3>
             <pre id="timeline-view" class="json-view"></pre>
 
-            <h3>Edit with Natural Language</h3>
-            <form id="edit-form">
-                <textarea id="edit-prompt" placeholder="Describe your edit (e.g., 'trim the first clip to 5 seconds')" rows="3" required></textarea>
-                <button type="submit">Submit Edit</button>
-            </form>
-            <div id="edit-status" class="status" hidden></div>
-
-            <h3>Edit Jobs</h3>
-            <ul id="job-list"></ul>
+            <div class="edit-layout">
+                <div class="edit-col">
+                    <h3>Chat <span id="chat-version-badge" class="badge badge-version" hidden>v1</span></h3>
+                    <div id="chat-dialog" class="chat-dialog">
+                        <div id="chat-messages" class="chat-messages">
+                            <p class="empty-state">Send a message to start editing with AI.</p>
+                        </div>
+                        <form id="chat-form" class="chat-input-row">
+                            <textarea id="chat-input" placeholder="Describe your edit (e.g., 'trim the first clip to 5 seconds')" rows="2" required></textarea>
+                            <button type="submit" id="chat-send-btn">Send</button>
+                        </form>
+                    </div>
+                </div>
+                <div class="edit-col">
+                    <h3>Edit Plan</h3>
+                    <div id="plan-box" class="plan-box">
+                        <p class="empty-state">No plan yet. Chat to generate one.</p>
+                    </div>
+                </div>
+            </div>
         </section>
     </main>
 

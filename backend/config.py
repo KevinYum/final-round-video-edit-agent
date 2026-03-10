@@ -7,5 +7,7 @@ load_dotenv()
 
 ENV = os.getenv("ENV", "development")
 STORAGE_DIR = Path(os.getenv("STORAGE_DIR", "./storage"))
-HOST = os.getenv("HOST", "0.0.0.0")
-PORT = int(os.getenv("PORT", "8000"))
+
+# OpenAI / LLM
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
