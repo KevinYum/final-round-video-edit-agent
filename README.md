@@ -1,6 +1,6 @@
 # 交付内容说明
 
-demo: https://www.bilibili.com/video/BV1LncQz9EKa
+demo: https://www.bilibili.com/video/BV1jjcQz4EhM
 
 ## 1. Runnable code
 
@@ -46,7 +46,7 @@ demo: https://www.bilibili.com/video/BV1LncQz9EKa
 ## 3. Demo script
 
     我后面才发现交付有脚本这么一说，但我现在交互方式，不太方便搞脚本，我等下录个demo视频上传到bilibili会把地址放在这里:
-    https://www.bilibili.com/video/BV1LncQz9EKa
+    https://www.bilibili.com/video/BV1jjcQz4EhM
 
 ## 4. Tests
 
