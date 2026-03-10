@@ -18,6 +18,7 @@ class VersionOut(BaseModel):
     version_number: int
     timeline_snapshot: dict | None = None
     is_current: bool
+    executed: bool = False
     created_at: datetime
 
     model_config = {"from_attributes": True}

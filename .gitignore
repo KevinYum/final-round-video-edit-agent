@@ -9,6 +9,7 @@ build/
 # Storage
 storage/videos/*
 storage/assets/*
+storage/exports/*
 storage/*.db
 !storage/.gitkeep
 

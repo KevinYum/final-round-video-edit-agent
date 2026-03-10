@@ -26,6 +26,7 @@ async def list_versions(
             version_number=v.version_number,
             timeline_snapshot=v.timeline_snapshot,
             is_current=v.is_current,
+            executed=v.executed,
             created_at=v.created_at,
         )
         for v in versions
@@ -48,6 +49,7 @@ async def get_version(
         version_number=version.version_number,
         timeline_snapshot=version.timeline_snapshot,
         is_current=version.is_current,
+        executed=version.executed,
         created_at=version.created_at,
         messages=[
             ConversationMessageOut(
@@ -83,5 +85,6 @@ async def revert_version(
         version_number=version.version_number,
         timeline_snapshot=version.timeline_snapshot,
         is_current=version.is_current,
+        executed=version.executed,
         created_at=version.created_at,
     )

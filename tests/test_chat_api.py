@@ -296,13 +296,28 @@ async def test_chat_no_current_plan_on_first_message(client: AsyncClient):
 
 
 async def test_execute_plan(client: AsyncClient):
-    """Execute creates a new version from the pending plan."""
+    """Execute runs tool steps and creates a new version with updated timeline."""
     await client.post("/api/projects", json={"project_id": "exec-test"})
     files = [("files", ("clip.mp4", io.BytesIO(b"fake video"), "video/mp4"))]
     await client.post("/api/projects/exec-test/assets", files=files)
 
-    # Chat to create a plan
-    with patch("backend.services.chat.llm_service.call_llm", new=_mock_call_llm(MOCK_PLAN_RESPONSE)):
+    # Get the real clip ID from the timeline
+    proj = await client.get("/api/projects/exec-test")
+    clip_id = proj.json()["timeline"]["clips"][0]["id"]
+
+    # Build a plan that references the real clip
+    plan_response = {
+        "assistant_message": "I'll trim the clip.",
+        "edit_plan": {
+            "steps": [
+                {"step_number": 1, "tool_name": "trim_clip", "params": {"clip_id": clip_id, "new_in": 0.0, "new_out": 5.0}},
+            ],
+            "summary": "Trim clip",
+        },
+        "needs_clarification": False,
+    }
+
+    with patch("backend.services.chat.llm_service.call_llm", new=_mock_call_llm(plan_response)):
         await client.post(
             "/api/projects/exec-test/chat",
             json={"message": "trim clip"},
@@ -312,15 +327,88 @@ async def test_execute_plan(client: AsyncClient):
     res = await client.post("/api/projects/exec-test/execute")
     assert res.status_code == 200
     data = res.json()
-    assert data["version_number"] == 2
+    assert data["success"] is True
+    assert data["version_number"] == 1  # stays at v1 (no new version created)
     assert data["timeline"] is not None
-    assert "executed" in data["message"].lower()
+    assert len(data["step_results"]) == 1
+    assert data["step_results"][0]["status"] == "completed"
 
-    # Verify version 2 is now current
+    # Verify timeline was actually mutated (clip trimmed to 5s)
+    clip = data["timeline"]["clips"][0]
+    assert clip["source_out"] == 5.0
+    assert data["timeline"]["total_duration"] == 5.0
+
+    # Verify version 1 is still current and marked as executed
     versions_res = await client.get("/api/projects/exec-test/versions")
     versions = versions_res.json()
-    assert len(versions) == 2
-    assert versions[1]["is_current"] is True
+    assert len(versions) == 1
+    assert versions[0]["is_current"] is True
+    assert versions[0]["executed"] is True
+
+
+async def test_execute_step_failure(client: AsyncClient):
+    """Execute with invalid clip_id returns success=false with step error."""
+    await client.post("/api/projects", json={"project_id": "exec-fail"})
+    files = [("files", ("clip.mp4", io.BytesIO(b"fake video"), "video/mp4"))]
+    await client.post("/api/projects/exec-fail/assets", files=files)
+
+    # Plan references a nonexistent clip
+    bad_plan = {
+        "assistant_message": "I'll trim a clip.",
+        "edit_plan": {
+            "steps": [
+                {"step_number": 1, "tool_name": "trim_clip", "params": {"clip_id": "nonexistent", "new_in": 0.0, "new_out": 5.0}},
+            ],
+            "summary": "Bad trim",
+        },
+        "needs_clarification": False,
+    }
+
+    with patch("backend.services.chat.llm_service.call_llm", new=_mock_call_llm(bad_plan)):
+        await client.post(
+            "/api/projects/exec-fail/chat",
+            json={"message": "trim clip"},
+        )
+
+    res = await client.post("/api/projects/exec-fail/execute")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["success"] is False
+    assert data["version_number"] == 1  # NOT bumped
+    assert len(data["step_results"]) == 1
+    assert data["step_results"][0]["status"] == "failed"
+    assert "not found" in data["step_results"][0]["error"].lower()
+
+
+async def test_execute_updates_project_timeline(client: AsyncClient):
+    """After execute, the project's timeline reflects the changes."""
+    await client.post("/api/projects", json={"project_id": "exec-tl"})
+    files = [("files", ("clip.mp4", io.BytesIO(b"fake video"), "video/mp4"))]
+    await client.post("/api/projects/exec-tl/assets", files=files)
+
+    proj = await client.get("/api/projects/exec-tl")
+    clip_id = proj.json()["timeline"]["clips"][0]["id"]
+
+    plan_response = {
+        "assistant_message": "Deleting the clip.",
+        "edit_plan": {
+            "steps": [
+                {"step_number": 1, "tool_name": "delete_clip", "params": {"clip_id": clip_id}},
+            ],
+            "summary": "Delete",
+        },
+        "needs_clarification": False,
+    }
+
+    with patch("backend.services.chat.llm_service.call_llm", new=_mock_call_llm(plan_response)):
+        await client.post("/api/projects/exec-tl/chat", json={"message": "delete clip"})
+
+    await client.post("/api/projects/exec-tl/execute")
+
+    # Verify the project timeline is updated
+    proj_after = await client.get("/api/projects/exec-tl")
+    assert len(proj_after.json()["timeline"]["clips"]) == 0
+    assert proj_after.json()["timeline"]["total_duration"] == 0.0
 
 
 async def test_execute_no_plan(client: AsyncClient):

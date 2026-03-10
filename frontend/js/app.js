@@ -3,6 +3,9 @@ const API = "/api/projects";
 let currentProjectId = null;
 let currentVersionNumber = null;
 
+// ── Player State ────────────────────────────────────────────────────
+let player = { clips: [], index: 0, totalDuration: 0 };
+
 // ── Projects ────────────────────────────────────────────────────────
 
 async function loadProjects() {
@@ -45,6 +48,7 @@ async function selectProject(projectId) {
 
     renderAssets(project.assets);
     renderTimeline(project.timeline);
+    renderVideoPreview(project.timeline);
     await loadChatHistory(projectId);
 
     document.getElementById("project-detail").scrollIntoView({ behavior: "smooth" });
@@ -82,9 +86,12 @@ function renderTimeline(timeline) {
         const dur = clip.source_out - clip.source_in;
         const tlEnd = clip.timeline_start + dur;
         const res = clip.width && clip.height ? `${clip.width}x${clip.height}` : "-";
-        const tx = clip.transcript
-            ? `${clip.transcript.segments ? clip.transcript.segments.length : 0} seg(s)`
-            : '<span class="meta">none</span>';
+        let tx = '<span class="meta">none</span>';
+        if (clip.subtitle_asset_id) {
+            tx = `<code class="id-cell">${escapeHtml(clip.subtitle_asset_id.slice(0, 8))}</code>`;
+        } else if (clip.transcript) {
+            tx = `${clip.transcript.segments ? clip.transcript.segments.length : 0} seg(s)`;
+        }
         return `<tr>
             <td><code class="id-cell">${escapeHtml(clip.id)}</code></td>
             <td><span class="badge badge-${clip.asset_type || "video"}">${clip.asset_type || "video"}</span></td>
@@ -102,6 +109,134 @@ function renderTimeline(timeline) {
         <tbody>${rows.join("")}</tbody>
     </table>
     <p class="meta" style="margin-top:0.5rem">Total output duration: ${formatTime(timeline.total_duration)}</p>`;
+}
+
+function renderVideoPreview(timeline) {
+    const el = document.getElementById("video-preview");
+    player = { clips: [], index: 0, totalDuration: 0 };
+
+    if (!timeline || !timeline.clips || timeline.clips.length === 0) {
+        el.innerHTML = '<p class="empty-state">No video to preview.</p>';
+        return;
+    }
+
+    const videoClips = timeline.clips.filter((c) => (c.asset_type || "video") === "video");
+    if (videoClips.length === 0) {
+        el.innerHTML = '<p class="empty-state">No video clips in timeline.</p>';
+        return;
+    }
+
+    player.clips = videoClips.map((c) => ({
+        src: `${API}/${currentProjectId}/assets/${c.asset_id}/download`,
+        sourceIn: c.source_in,
+        sourceOut: c.source_out,
+        name: c.asset_name || c.id,
+        dur: c.source_out - c.source_in,
+    }));
+    player.totalDuration = timeline.total_duration;
+
+    const first = player.clips[0];
+
+    // Build clip segment bar
+    let segHtml = "";
+    player.clips.forEach((c, i) => {
+        segHtml += `<div class="player-seg${i === 0 ? " seg-active" : ""}" data-index="${i}" style="flex:${c.dur}" onclick="playerJumpTo(${i})" title="${escapeHtml(c.name)} (${formatTime(c.dur)})">
+            <span class="seg-label">${escapeHtml(c.name)}</span>
+        </div>`;
+    });
+
+    el.innerHTML = `<div class="player-container">
+        <video id="preview-video" controls class="video-player"
+               src="${first.src}#t=${first.sourceIn},${first.sourceOut}">
+        </video>
+        <div class="player-clip-bar">${segHtml}</div>
+        <div class="player-info" id="player-info">
+            <span id="player-clip-label">Clip 1/${player.clips.length}: ${escapeHtml(first.name)}</span>
+            <span class="meta" id="player-clip-range">${formatTime(first.sourceIn)} – ${formatTime(first.sourceOut)}</span>
+            <span class="meta" style="margin-left:auto">Total: ${formatTime(player.totalDuration)}</span>
+            <button class="export-btn" onclick="exportVideo()" id="export-btn">Export</button>
+        </div>
+    </div>`;
+
+    const video = document.getElementById("preview-video");
+    video.addEventListener("ended", playerAdvance);
+}
+
+function renderExportPreview() {
+    const el = document.getElementById("video-preview");
+    const exportUrl = `${API}/${currentProjectId}/export?t=${Date.now()}`;
+    el.innerHTML = `<div class="player-container">
+        <video id="preview-video" controls class="video-player" src="${exportUrl}"></video>
+        <div class="player-info">
+            <span>Rendered v${currentVersionNumber}</span>
+            <span class="meta" style="margin-left:auto"></span>
+            <button class="export-btn" onclick="exportVideo()" id="export-btn">Download</button>
+        </div>
+    </div>`;
+}
+
+function playerAdvance() {
+    if (player.index >= player.clips.length - 1) return;
+    player.index++;
+    playerLoadClip(player.index, true);
+}
+
+function playerJumpTo(index) {
+    player.index = index;
+    playerLoadClip(index, false);
+}
+
+function playerLoadClip(index, autoplay) {
+    const clip = player.clips[index];
+    if (!clip) return;
+
+    const video = document.getElementById("preview-video");
+    video.src = `${clip.src}#t=${clip.sourceIn},${clip.sourceOut}`;
+    video.load();
+    if (autoplay) video.play();
+
+    // Update info
+    document.getElementById("player-clip-label").textContent =
+        `Clip ${index + 1}/${player.clips.length}: ${escapeHtml(clip.name)}`;
+    document.getElementById("player-clip-range").textContent =
+        `${formatTime(clip.sourceIn)} – ${formatTime(clip.sourceOut)}`;
+
+    // Update active segment
+    document.querySelectorAll(".player-seg").forEach((el, i) => {
+        el.classList.toggle("seg-active", i === index);
+    });
+}
+
+async function exportVideo() {
+    if (!currentProjectId) return;
+
+    const btn = document.getElementById("export-btn");
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = "Rendering...";
+    }
+
+    try {
+        const res = await fetch(`${API}/${currentProjectId}/export`);
+        if (!res.ok) throw new Error(await extractError(res, "Export failed"));
+
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `${currentProjectId}_v${currentVersionNumber || 0}.mp4`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+    } catch (err) {
+        alert(`Export failed: ${err.message}`);
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = "Export";
+        }
+    }
 }
 
 async function loadChatHistory(projectId) {
@@ -136,6 +271,14 @@ async function loadChatHistory(projectId) {
         return;
     }
 
+    // If version was executed, show empty chat, plan with checkmarks, and export preview
+    if (current.executed) {
+        messagesEl.innerHTML = '<p class="empty-state">Send a message to start editing with AI.</p>';
+        renderLatestPlan(detail.messages, true);
+        renderExportPreview();
+        return;
+    }
+
     renderChatMessages(detail.messages);
     renderLatestPlan(detail.messages);
 }
@@ -158,7 +301,7 @@ function renderChatMessages(messages) {
     el.scrollTop = el.scrollHeight;
 }
 
-function renderLatestPlan(messages) {
+function renderLatestPlan(messages, executed = false) {
     const planBox = document.getElementById("plan-box");
 
     // Find the latest assistant message with an edit plan
@@ -176,7 +319,11 @@ function renderLatestPlan(messages) {
         return;
     }
 
-    renderPlanBox(latestPlan);
+    if (executed) {
+        renderPlanBoxExecuted(latestPlan);
+    } else {
+        renderPlanBox(latestPlan);
+    }
 }
 
 function renderPlanBox(plan) {
@@ -186,10 +333,38 @@ function renderPlanBox(plan) {
         const paramsStr = Object.entries(step.params)
             .map(([k, v]) => `<span class="step-param-key">${escapeHtml(k)}</span>=${escapeHtml(JSON.stringify(v))}`)
             .join(", ");
-        html += `<li><span class="step-tool">${escapeHtml(step.tool_name)}</span>(<span class="step-params">${paramsStr}</span>)</li>`;
+        html += `<li data-step="${step.step_number}">
+            <span class="step-status" id="step-status-${step.step_number}"></span>
+            <span class="step-tool">${escapeHtml(step.tool_name)}</span>(<span class="step-params">${paramsStr}</span>)
+        </li>`;
     }
+    html += `<li class="step-render-item">
+        <span class="step-status" id="step-status-render"></span>
+        <span class="step-tool">render_video</span>
+    </li>`;
     html += `</ol>`;
     html += `<button id="execute-btn" class="execute-btn" onclick="executePlan()">Execute Plan</button>`;
+    planBox.innerHTML = html;
+}
+
+function renderPlanBoxExecuted(plan) {
+    const planBox = document.getElementById("plan-box");
+    let html = `<ol class="plan-steps">`;
+    for (const step of plan.steps) {
+        const paramsStr = Object.entries(step.params)
+            .map(([k, v]) => `<span class="step-param-key">${escapeHtml(k)}</span>=${escapeHtml(JSON.stringify(v))}`)
+            .join(", ");
+        html += `<li data-step="${step.step_number}">
+            <span class="step-status step-completed">\u2705</span>
+            <span class="step-tool">${escapeHtml(step.tool_name)}</span>(<span class="step-params">${paramsStr}</span>)
+        </li>`;
+    }
+    html += `<li class="step-render-item">
+        <span class="step-status step-completed">\u2705</span>
+        <span class="step-tool">render_video</span>
+    </li>`;
+    html += `</ol>`;
+    html += `<div class="plan-executed">Plan executed (v${currentVersionNumber}).</div>`;
     planBox.innerHTML = html;
 }
 
@@ -338,14 +513,24 @@ document.getElementById("chat-form").addEventListener("submit", async (e) => {
 
 // ── Execute Plan ────────────────────────────────────────────────────
 
+function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function executePlan() {
     if (!currentProjectId) return;
 
     const executeBtn = document.getElementById("execute-btn");
     if (executeBtn) {
         executeBtn.disabled = true;
-        executeBtn.textContent = "Executing...";
+        executeBtn.textContent = "Executing & Rendering...";
     }
+
+    // Mark all steps as pending
+    document.querySelectorAll(".step-status").forEach((el) => {
+        el.className = "step-status step-pending";
+        el.textContent = "\u23F3";
+    });
 
     try {
         const res = await fetch(`${API}/${currentProjectId}/execute`, {
@@ -355,21 +540,95 @@ async function executePlan() {
 
         const data = await res.json();
 
-        // Refresh timeline and version info
-        if (data.timeline) {
-            renderTimeline(data.timeline);
+        // Animate step statuses one by one
+        if (data.step_results) {
+            for (const sr of data.step_results) {
+                await sleep(300);
+                const el = document.getElementById(`step-status-${sr.step_number}`);
+                if (!el) continue;
+                if (sr.status === "completed") {
+                    el.className = "step-status step-completed";
+                    el.textContent = "\u2705";
+                } else if (sr.status === "failed") {
+                    el.className = "step-status step-failed";
+                    el.textContent = "\u274C";
+                    el.title = sr.error || "Failed";
+                }
+            }
         }
-        currentVersionNumber = data.version_number;
-        const badge = document.getElementById("chat-version-badge");
-        badge.textContent = `v${data.version_number}`;
 
-        // Update plan box to show executed state
-        const planBox = document.getElementById("plan-box");
-        planBox.innerHTML = `<div class="plan-executed">Plan executed. Version ${data.version_number} created.</div>`;
+        if (data.success) {
+            // Update timeline and version immediately
+            currentVersionNumber = data.version_number;
+            const badge = document.getElementById("chat-version-badge");
+            badge.textContent = `v${data.version_number}`;
+            if (data.timeline) {
+                renderTimeline(data.timeline);
+            }
+
+            // Set up preview video and wait for it to actually be playable
+            const renderEl = document.getElementById("step-status-render");
+            const el = document.getElementById("video-preview");
+            const exportUrl = `${API}/${currentProjectId}/export?t=${Date.now()}`;
+            el.innerHTML = `<div class="player-container">
+                <video id="preview-video" controls class="video-player" src="${exportUrl}"></video>
+                <div class="player-info">
+                    <span>Rendered v${currentVersionNumber}</span>
+                    <span class="meta" style="margin-left:auto"></span>
+                    <button class="export-btn" onclick="exportVideo()" id="export-btn">Download</button>
+                </div>
+            </div>`;
+
+            const video = document.getElementById("preview-video");
+            await new Promise((resolve) => {
+                video.addEventListener("canplay", () => {
+                    if (renderEl) {
+                        renderEl.className = "step-status step-completed";
+                        renderEl.textContent = "\u2705";
+                    }
+                    resolve();
+                }, { once: true });
+                video.addEventListener("error", () => {
+                    if (renderEl) {
+                        renderEl.className = "step-status step-failed";
+                        renderEl.textContent = "\u274C";
+                        renderEl.title = "Render failed";
+                    }
+                    resolve();
+                }, { once: true });
+            });
+
+            // Show success only after render is done
+            const planBox = document.getElementById("plan-box");
+            const btn = document.getElementById("execute-btn");
+            if (btn) btn.remove();
+            planBox.insertAdjacentHTML(
+                "beforeend",
+                `<div class="plan-executed">Plan executed (v${data.version_number}).</div>`
+            );
+
+            // Clear chat for new version
+            const messagesEl = document.getElementById("chat-messages");
+            messagesEl.innerHTML = '<p class="empty-state">Send a message to start editing with AI.</p>';
+        } else {
+
+            // Failure: show error but keep plan visible with step statuses
+            const planBox = document.getElementById("plan-box");
+            planBox.insertAdjacentHTML(
+                "beforeend",
+                `<div class="plan-error">Error: ${escapeHtml(data.message)}</div>`
+            );
+            if (executeBtn) {
+                executeBtn.disabled = false;
+                executeBtn.textContent = "Execute Plan";
+            }
+        }
     } catch (err) {
         const planBox = document.getElementById("plan-box");
-        planBox.insertAdjacentHTML("beforeend", `<div class="plan-error">Error: ${escapeHtml(err.message)}</div>`);
-    } finally {
+        planBox.insertAdjacentHTML(
+            "beforeend",
+            `<div class="plan-error">Error: ${escapeHtml(err.message)}</div>`
+        );
         if (executeBtn) {
             executeBtn.disabled = false;
             executeBtn.textContent = "Execute Plan";

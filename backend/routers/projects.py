@@ -1,7 +1,9 @@
+import asyncio
 import copy
 import os
 import shutil
 import uuid
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm.attributes import flag_modified
@@ -22,10 +24,14 @@ from backend.schemas import (
     TimelineOut,
 )
 from backend.services.metadata import classify_asset_type, extract_metadata
+from backend.services.render import render_timeline_to_file
 from backend.services.timeline import (
     add_assets_to_timeline,
     create_empty_timeline,
 )
+from backend.services import version as version_service
+
+EXPORT_DIR = ASSET_DIR.parent / "exports"
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -171,11 +177,13 @@ async def load_assets(
             }
         )
 
-    # Update timeline with new segments
+    # Auto-populate timeline only on first upload (empty timeline).
+    # Subsequent assets are available via insert_clip/replace_clip in edit plans.
     timeline = copy.deepcopy(project.timeline) or create_empty_timeline()
-    project.timeline = add_assets_to_timeline(timeline, timeline_entries)
+    if not timeline.get("clips"):
+        project.timeline = add_assets_to_timeline(timeline, timeline_entries)
+        flag_modified(project, "timeline")
     project.status = "active"
-    flag_modified(project, "timeline")
 
     await db.commit()
 
@@ -222,6 +230,50 @@ async def get_timeline(project_id: str, db: AsyncSession = Depends(get_db)) -> T
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     return TimelineOut(project_id=project.id, timeline=project.timeline)
+
+
+# ── Export ────────────────────────────────────────────────────────────
+
+
+@router.get("/{project_id}/export")
+async def export_video(
+    project_id: str, db: AsyncSession = Depends(get_db)
+) -> FileResponse:
+    project = await db.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    timeline = project.timeline
+    if not timeline or not timeline.get("clips"):
+        raise HTTPException(status_code=400, detail="No clips in timeline to export")
+
+    # Get current version number for filename
+    version = await version_service.get_current_version(project_id, db)
+    version_num = version.version_number if version else 0
+
+    # Build asset_id -> file_path mapping
+    result = await db.execute(
+        select(Asset).where(Asset.project_id == project_id)
+    )
+    assets = result.scalars().all()
+    asset_paths = {a.id: a.file_path for a in assets}
+
+    output_path = EXPORT_DIR / project_id / f"v{version_num}.mp4"
+
+    # Render if not cached
+    if not output_path.exists():
+        try:
+            await asyncio.to_thread(
+                render_timeline_to_file, timeline, asset_paths, output_path
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    return FileResponse(
+        output_path,
+        filename=f"{project_id}_v{version_num}.mp4",
+        media_type="video/mp4",
+    )
 
 
 # ── Edit Jobs ─────────────────────────────────────────────────────────

@@ -50,23 +50,37 @@ async def test_list_versions_after_chat(client: AsyncClient):
 
 async def test_list_versions_after_execute(client: AsyncClient):
     await client.post("/api/projects", json={"project_id": "ver-exec"})
+    files = [("files", ("clip.mp4", io.BytesIO(b"fake video"), "video/mp4"))]
+    await client.post("/api/projects/ver-exec/assets", files=files)
 
-    with patch("backend.services.chat.llm_service.call_llm", new=_mock_call_llm(MOCK_PLAN)):
+    # Get real clip ID
+    proj = await client.get("/api/projects/ver-exec")
+    clip_id = proj.json()["timeline"]["clips"][0]["id"]
+
+    plan = {
+        "assistant_message": "Trimming.",
+        "edit_plan": {
+            "steps": [{"step_number": 1, "tool_name": "trim_clip", "params": {"clip_id": clip_id, "new_in": 0, "new_out": 5}}],
+            "summary": "Trim",
+        },
+        "needs_clarification": False,
+    }
+
+    with patch("backend.services.chat.llm_service.call_llm", new=_mock_call_llm(plan)):
         await client.post(
             "/api/projects/ver-exec/chat",
             json={"message": "trim clip"},
         )
 
-    # Execute the plan to create version 2
+    # Execute the plan — stays at version 1, marks it executed
     await client.post("/api/projects/ver-exec/execute")
 
     res = await client.get("/api/projects/ver-exec/versions")
     versions = res.json()
-    assert len(versions) == 2
+    assert len(versions) == 1
     assert versions[0]["version_number"] == 1
-    assert versions[0]["is_current"] is False
-    assert versions[1]["version_number"] == 2
-    assert versions[1]["is_current"] is True
+    assert versions[0]["is_current"] is True
+    assert versions[0]["executed"] is True
 
 
 async def test_get_version_detail(client: AsyncClient):
@@ -99,15 +113,41 @@ async def test_revert_to_version(client: AsyncClient):
     files = [("files", ("clip.mp4", io.BytesIO(b"fake video"), "video/mp4"))]
     await client.post("/api/projects/ver-revert/assets", files=files)
 
+    # Get real clip ID
+    proj = await client.get("/api/projects/ver-revert")
+    clip_id = proj.json()["timeline"]["clips"][0]["id"]
+
+    plan = {
+        "assistant_message": "Trimming.",
+        "edit_plan": {
+            "steps": [{"step_number": 1, "tool_name": "trim_clip", "params": {"clip_id": clip_id, "new_in": 0, "new_out": 5}}],
+            "summary": "Trim",
+        },
+        "needs_clarification": False,
+    }
+
     # Create version 1 via chat
-    with patch("backend.services.chat.llm_service.call_llm", new=_mock_call_llm(MOCK_PLAN)):
+    with patch("backend.services.chat.llm_service.call_llm", new=_mock_call_llm(plan)):
         await client.post(
             "/api/projects/ver-revert/chat",
             json={"message": "trim clip"},
         )
 
-    # Create version 2 via execute
+    # Execute to mark v1 as executed
     await client.post("/api/projects/ver-revert/execute")
+
+    # Chat again to create version 2 (ensure_version detects executed v1)
+    with patch("backend.services.chat.llm_service.call_llm", new=_mock_call_llm(plan)):
+        await client.post(
+            "/api/projects/ver-revert/chat",
+            json={"message": "trim again"},
+        )
+
+    # Now we have v1 (executed) and v2 (current)
+    versions_res = await client.get("/api/projects/ver-revert/versions")
+    versions = versions_res.json()
+    assert len(versions) == 2
+    assert versions[1]["is_current"] is True
 
     # Revert to version 1
     res = await client.post(

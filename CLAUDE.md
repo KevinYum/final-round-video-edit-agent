@@ -8,7 +8,7 @@ A FastAPI-based video editing agent that allows users to create projects, upload
 - **Frontend**: Simple HTML/CSS/JS (no framework)
 - **Package Manager**: Python uv
 - **Database**: SQLite (via aiosqlite + SQLAlchemy async)
-- **Media Processing**: MoviePy (metadata extraction, future editing)
+- **Media Processing**: MoviePy (metadata extraction, video rendering with overlays/crop/title cards)
 - **Image Metadata**: Pillow
 - **LLM**: LangChain + OpenAI (conversational edit planning)
 - **Config**: python-dotenv (`.env` / `.env.example`)
@@ -68,6 +68,7 @@ Every user request must be logged in `INSTRUCTIONS.md` with:
 | `GET` | `/api/projects/{project_id}/assets` | List assets |
 | `GET` | `/api/projects/{project_id}/assets/{asset_id}/download` | Download asset |
 | `GET` | `/api/projects/{project_id}/timeline` | Get current timeline |
+| `GET` | `/api/projects/{project_id}/export` | Export rendered video (MoviePy concat) |
 | `POST` | `/api/projects/{project_id}/edit` | Submit NL edit (creates job) |
 | `GET` | `/api/projects/{project_id}/jobs` | List edit jobs |
 | `POST` | `/api/projects/{project_id}/chat` | Conversational edit (LLM planning) |
@@ -80,7 +81,7 @@ Every user request must be logged in `INSTRUCTIONS.md` with:
 - **projects**: id (string PK), target_aspect_ratio, language, timeline (JSON), transcript (JSON), status, created_at, updated_at
 - **assets**: id (UUID string PK), project_id (FK), asset_type, original_filename, file_path, duration_seconds, width, height, format, file_size_bytes, metadata_extra (JSON), created_at
 - **project_edit_jobs**: id, project_id (FK), prompt, status, timeline_before (JSON), timeline_after (JSON), error_message, created_at, completed_at
-- **project_versions**: id, project_id (FK), version_number, timeline_snapshot (JSON), is_current (bool), created_at
+- **project_versions**: id, project_id (FK), version_number, timeline_snapshot (JSON), is_current (bool), executed (bool), created_at
 - **conversation_messages**: id, version_id (FK), role, content, edit_plan (JSON), needs_clarification (bool), sequence_number, created_at
 
 ### Timeline JSON Structure (Clip-Sequence Model)
@@ -146,8 +147,12 @@ The timeline represents the final output as an ordered list of clips. Each clip 
 6. Plan is validated against tool definitions (tool names, required params, no unknown params)
 7. If validation fails or `needs_clarification=true`: plan is rejected, user gets error details or follow-up questions
 8. Edit plan displayed in separate plan box on UI with an "Execute" button
-9. User reviews plan and clicks Execute → `POST /execute` → new version created with timeline snapshot
-10. User can revert to any previous version via `POST /versions/revert`
+9. User reviews plan and clicks Execute → `POST /execute` → steps executed sequentially via tool executors
+10. Each step mutates a deep-copied timeline; on any failure, original timeline is untouched
+11. On success: timeline is recomputed (`recompute_timeline`), current version marked `executed=True`, video rendered and cached
+12. Frontend shows per-step progress (pending → completed/failed) from `step_results` in response, then shows rendered preview
+13. Next chat message triggers lazy version creation (new version for next conversation)
+14. User can revert to any previous version via `POST /versions/revert`
 
 ### Edit Plan Structure (Strictly Executable)
 Each plan step is directly executable as `tool_name(**params)`:
@@ -161,7 +166,7 @@ Each plan step is directly executable as `tool_name(**params)`:
 ```
 - `params` uses exact parameter names from tool definitions
 - Values are concrete (actual clip IDs, asset IDs, numeric values)
-- Steps are executed sequentially (MoviePy execution planned for future version)
+- Steps are executed sequentially via `TOOL_REGISTRY` in `backend/services/tool_executors.py`
 
 ### Plan Validation
 After the LLM returns a plan, `validate_plan()` in `tools.py` checks:
@@ -182,7 +187,8 @@ This allows the LLM to see its own prior plans and iterate on them based on user
 - Chat and Plan are side-by-side in a two-column layout
 - **Chat** (left): conversation history with user/assistant bubbles, text input
 - **Plan** (right): current edit plan with tool steps, params, and Execute button
-- Plan box updates when LLM returns a ready plan; Execute button creates a new version
+- Plan box updates when LLM returns a ready plan; Execute button runs the plan and renders the video
+- After execution, plan box persists with all steps checked; preview shows rendered video from `/export`
 
 ### Available Edit Tools (11)
 - **Trim/Cut**: `trim_clip`, `split_clip`, `delete_clip`
@@ -190,7 +196,23 @@ This allows the LLM to see its own prior plans and iterate on them based on user
 - **Text**: `add_text_overlay`, `add_title_card`, `add_subtitles`
 - **Aspect**: `change_aspect_ratio`, `crop_clip`
 
+### Plan Execution (`POST /execute`)
+- Finds the latest ready plan from current version's conversation messages
+- Deep-copies the timeline for transactional safety
+- Executes each step sequentially via `TOOL_REGISTRY` (maps tool name → executor function)
+- Each executor has signature `fn(timeline: dict, params: dict, context: ToolContext) -> None`
+- On step failure (`ToolExecutionError`): returns `ExecuteResponse(success=False)` with `step_results` showing which step failed and why; original timeline untouched
+- On success: `recompute_timeline()` recalculates `timeline_start` values and `total_duration`
+- Current version is updated (not a new version): `timeline_snapshot` updated, `executed=True`
+- After commit, renders video via MoviePy (`asyncio.to_thread`) and caches at `storage/exports/{project_id}/v{N}.mp4` (non-fatal if render fails)
+- `_pending_aspect_ratio`: special key for `change_aspect_ratio` tool (project-level, not clip-level)
+- New clip fields added by executors: `overlays`, `subtitle_asset_id`, `crop`, `title_card`
+
 ### Version System
-- Each project has versions (timeline snapshots) created when user executes a plan via `POST /execute`
+- Each project has versions (timeline snapshots) with an `executed` flag
+- Execute updates the current version in-place (sets `executed=True`), does NOT create a new version
+- New version is created lazily: when the next chat message arrives, `ensure_version()` detects the current version is executed and creates a new one
+- This means: chat on v2, execute on v2, next chat creates v3 — version number stays stable during execution
 - Conversation messages are scoped to the current version session
+- After execution, frontend shows executed plan with checkmarks and rendered video preview
 - Reverting restores the project timeline to a previous snapshot

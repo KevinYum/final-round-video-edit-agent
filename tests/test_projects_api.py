@@ -166,11 +166,13 @@ async def test_timeline_populated_after_asset_upload(client: AsyncClient):
 
 
 async def test_timeline_multiple_clips_sequential(client: AsyncClient):
+    """Upload multiple files in a single request — all added to empty timeline."""
     await client.post("/api/projects", json={"project_id": "tl-multi"})
-    files1 = [("files", ("a.mp4", io.BytesIO(b"vid1"), "video/mp4"))]
-    await client.post("/api/projects/tl-multi/assets", files=files1)
-    files2 = [("files", ("b.mp4", io.BytesIO(b"vid2"), "video/mp4"))]
-    await client.post("/api/projects/tl-multi/assets", files=files2)
+    files = [
+        ("files", ("a.mp4", io.BytesIO(b"vid1"), "video/mp4")),
+        ("files", ("b.mp4", io.BytesIO(b"vid2"), "video/mp4")),
+    ]
+    await client.post("/api/projects/tl-multi/assets", files=files)
 
     res = await client.get("/api/projects/tl-multi/timeline")
     tl = res.json()["timeline"]
@@ -181,6 +183,23 @@ async def test_timeline_multiple_clips_sequential(client: AsyncClient):
     clip2 = tl["clips"][1]
     clip1_dur = clip1["source_out"] - clip1["source_in"]
     assert clip2["timeline_start"] == clip1["timeline_start"] + clip1_dur
+
+
+async def test_second_upload_does_not_modify_timeline(client: AsyncClient):
+    """Subsequent uploads after first should not auto-add to timeline."""
+    await client.post("/api/projects", json={"project_id": "tl-no-auto"})
+    files1 = [("files", ("a.mp4", io.BytesIO(b"vid1"), "video/mp4"))]
+    await client.post("/api/projects/tl-no-auto/assets", files=files1)
+
+    res = await client.get("/api/projects/tl-no-auto/timeline")
+    assert len(res.json()["timeline"]["clips"]) == 1
+
+    # Second upload should NOT add to timeline
+    files2 = [("files", ("b.mp4", io.BytesIO(b"vid2"), "video/mp4"))]
+    await client.post("/api/projects/tl-no-auto/assets", files=files2)
+
+    res = await client.get("/api/projects/tl-no-auto/timeline")
+    assert len(res.json()["timeline"]["clips"]) == 1  # still 1
 
 
 async def test_timeline_subtitle_excluded(client: AsyncClient):

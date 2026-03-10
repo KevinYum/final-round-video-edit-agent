@@ -1,4 +1,4 @@
-from backend.schemas.chat import ChatRequest, ChatResponse, EditPlan, ExecuteResponse, ToolStep
+from backend.schemas.chat import ChatRequest, ChatResponse, EditPlan, ExecuteResponse, StepResult, ToolStep
 from backend.schemas.project import (
     AssetOut,
     CreateProjectRequest,
@@ -24,6 +24,7 @@ __all__ = [
     "EditPlan",
     "EditRequest",
     "ExecuteResponse",
+    "StepResult",
     "ProjectEditJobOut",
     "ProjectListOut",
     "ProjectOut",

@@ -344,3 +344,174 @@ It serves as a complete history of how this project was created and evolved.
 - All 58 tests pass
 
 ---
+
+## v0.7.0 — 2026-03-10T15:00:00Z — Execute Edit Plans with Tool Functions
+
+**User Request:**
+> Implement the execution of the previously generated plan. After execute the plan, steps are executed one by one sequentially by making related function calls. Progress should show on UI using "check" and "pending" for current executing step. If execution fails on some step, version cannot be bumped and error msg should be shown. If execution succeeds, version is bumped, chat history is cleared, and timeline is updated to reflect all changes.
+
+**Changes Made:**
+- Created `backend/services/tool_executors.py` — 11 tool executor functions (`trim_clip`, `split_clip`, `delete_clip`, `reorder_clips`, `insert_clip`, `replace_clip`, `add_text_overlay`, `add_title_card`, `add_subtitles`, `change_aspect_ratio`, `crop_clip`) + `ToolExecutionError`, `ToolContext`, helper functions (`_find_clip`, `_find_clip_index`, `_find_asset`, `recompute_timeline`), and `TOOL_REGISTRY` mapping
+- Modified `backend/schemas/chat.py` — added `StepResult` model (step_number, tool_name, status, error), expanded `ExecuteResponse` with `step_results` list and `success` bool
+- Modified `backend/schemas/__init__.py` — exported `StepResult`
+- Rewrote `backend/services/execute.py` — real step-by-step execution loop: deep-copies timeline, runs each step via `TOOL_REGISTRY`, records per-step `StepResult`, on failure returns `success=False` without version bump, on success recomputes timeline and creates new version
+- Modified `frontend/js/app.js` — `renderPlanBox()` adds step status spans, `executePlan()` shows pending/check/fail per step, updates timeline and version badge on success, shows error on failure
+- Modified `frontend/css/style.css` — added `.step-status`, `.step-pending`, `.step-completed`, `.step-failed` classes
+- Created `tests/test_tool_executors.py` — 27 unit tests for all 11 executors + `recompute_timeline`
+- Updated `tests/test_chat_api.py` — `test_execute_plan` verifies `step_results` and `success`, added `test_execute_step_failure` and `test_execute_updates_project_timeline`
+- Updated `tests/test_versions_api.py` — fixed tests to use real clip IDs from uploaded assets
+- All 89 tests pass
+
+---
+
+## v0.7.1 — 2026-03-10T16:00:00Z — Plan Persistence & Sequential Video Preview Player
+
+**User Request:**
+> 1. As v1 plan is executed, plan box should still linger on v1 with all steps checked, not directly showing empty, until v2's first plan try
+> 2. There should be a player box for last generated version's video — preview should be final view, not just clip
+
+**Changes Made:**
+- **Plan box persistence** (`frontend/js/app.js`):
+  - After successful execution, chat is cleared manually instead of calling `loadChatHistory()` which would reset the plan box
+  - Plan box stays visible with all steps checked + "Plan executed" banner until user generates a new plan via chat
+- **Sequential video preview player** (`frontend/js/app.js`):
+  - Replaced single-clip player with timeline-aware sequential player
+  - `player` state object tracks clips list, current index, total duration
+  - `renderVideoPreview()` builds clip segment bar showing all video clips proportional to their duration
+  - `playerAdvance()` auto-plays next clip when current clip ends (via `ended` event + media fragments `#t=in,out`)
+  - `playerJumpTo(index)` + `playerLoadClip()` for clicking clip segments to jump
+  - Shows "Clip N/M: name" label and source range, with total duration
+- **Player CSS** (`frontend/css/style.css`):
+  - Added `.player-clip-bar` (flex bar), `.player-seg` (clip segments with proportional widths), `.seg-label`, `.seg-active` styles
+  - Removed old `.clip-selector`, `.clip-btn`, `.download-btn` styles
+- **HTML** (`frontend/index.html`): Preview section already in place (unchanged)
+- All 89 tests pass
+
+---
+
+## v0.7.2 — 2026-03-10T16:30:00Z — Video Export (MoviePy Rendering)
+
+**User Request:**
+> Add an export button in preview section to download the full video of current version.
+
+**Changes Made:**
+- Created `backend/services/render.py` — `render_timeline_to_file()`: loads video clips via MoviePy, subclips to source_in/source_out, concatenates, writes to mp4 (libx264 + aac)
+- Added `GET /api/projects/{project_id}/export` endpoint in `backend/routers/projects.py`:
+  - Builds asset_id → file_path mapping from DB
+  - Renders via `asyncio.to_thread()` to avoid blocking the event loop
+  - Caches rendered files at `storage/exports/{project_id}/v{N}.mp4`
+  - Returns `FileResponse` with `video/mp4` media type
+- Added "Export" button in frontend preview player info bar (`frontend/js/app.js`):
+  - `exportVideo()` fetches the export endpoint, creates blob download
+  - Shows "Rendering..." state while processing
+- Added `.export-btn` CSS styles (`frontend/css/style.css`)
+- Added `storage/exports/*` to `.gitignore`
+- Updated CLAUDE.md API spec table with export endpoint
+- All 89 tests pass
+
+---
+
+## v0.8.0 — 2026-03-10T17:00:00Z — Version Semantics Fix & Rendered Preview
+
+**User Request:**
+> 1. When executing add_text_overlay, the preview doesn't really change, debug and fix.
+> 2. The version is a little errorness — when chat shows v3, executed plan/exported videos should be on v2 (v3 is ongoing), but current logic puts it in v2.
+
+**Follow-up:**
+> Use rendered output for each plan execution saved in local storage instead of DOM overlays. Export doesn't need to re-render; rendering happens during plan execution.
+
+**Changes Made:**
+- **Version semantics overhaul** (`backend/services/execute.py`, `backend/services/version.py`):
+  - Execute no longer creates a new version — updates current version's `timeline_snapshot` and sets `executed=True`
+  - New version created lazily on next chat via `ensure_version()` (detects `executed=True` on current version)
+  - Version number stays stable during execution (v2 plan → v2 execute → v3 starts on next chat)
+- **`executed` flag** (`backend/models/version.py`):
+  - Added `executed: bool` column to `ProjectVersion` model (default `False`)
+- **Schema update** (`backend/schemas/version.py`):
+  - Added `executed: bool = False` to `VersionOut`
+- **Router fix** (`backend/routers/versions.py`):
+  - Added `executed=v.executed` to all three `VersionOut` constructions (list, detail, revert)
+- **Rendered preview during execution** (`backend/services/execute.py`):
+  - After successful execution, renders video via `asyncio.to_thread(render_timeline_to_file, ...)`
+  - Cached at `storage/exports/{project_id}/v{N}.mp4`
+  - Non-fatal: render failure doesn't break execution
+- **Frontend preview** (`frontend/js/app.js`):
+  - Removed DOM overlay approach (rejected as error-prone)
+  - Added `renderExportPreview()` — shows rendered video from `/export` endpoint after execution
+  - Added `renderPlanBoxExecuted()` — shows plan with all steps checked when loading executed version
+  - `executePlan()` shows "Executing & Rendering..." during process
+  - `loadChatHistory()` detects executed version: shows empty chat + executed plan + export preview
+- **Test updates** (`tests/test_chat_api.py`, `tests/test_versions_api.py`):
+  - Updated assertions for new version semantics: execute stays at same version, `executed=True`
+  - `test_revert_to_version` creates v2 via chat after v1 execution
+- All 89 tests pass
+
+---
+
+## v0.8.1 — 2026-03-10T17:30:00Z — Render Pipeline: Overlays, Title Cards, Resolution Fix
+
+**User Request:**
+> 1. No overlay is created after executing add_text_overlay — only subtitle added
+> 2. Second clip renders as tiled/repeated images — source clip only has one earth
+> Check whether tool executors are consistent with the plan shown
+
+**Root Cause:**
+- `render.py` only did basic `subclip` + `concatenate` — it completely ignored `overlays`, `crop`, `title_card` fields added by tool executors
+- Clips with different resolutions caused tiling artifacts when concatenated without normalization
+
+**Changes Made:**
+- **Rewrote `backend/services/render.py`** — full rendering pipeline:
+  - **Resolution normalization**: determines target size from first video clip, resizes all subsequent clips to match (fixes tiling)
+  - **Text overlays**: renders `overlays` list on each clip using MoviePy `TextClip` + `CompositeVideoClip`
+  - **Title cards**: renders `title_card` type clips using `ColorClip` + `TextClip`
+  - **Crop**: applies MoviePy `cropped()` then resizes back to target
+  - **Position mapping**: converts overlay position names (center, top, bottom-left, etc.) to pixel coordinates with margins
+  - **Font discovery**: searches common system font paths (macOS Helvetica, Linux DejaVu/Liberation)
+  - **Graceful fallback**: overlay/title card failures are non-fatal (logged as warnings, clip still renders)
+  - Uses `concatenate_videoclips(method="compose")` for safe multi-resolution concatenation
+- Cleared cached exports to force re-render with new pipeline
+- All 89 tests pass
+
+---
+
+## v0.8.2 — 2026-03-10T18:00:00Z — Cache-Busting Fix & Subtitle Burn-In
+
+**User Request:**
+> 1. When removing one clip from two clips, the rendered output starts empty until page refresh
+> 2. Subtitle seems not correctly rendered — must fix
+
+**Changes Made:**
+- **Browser cache fix** (`frontend/js/app.js`):
+  - Added `?t=${Date.now()}` cache-busting parameter to export URL in `renderExportPreview()`
+  - Fixed ordering: `currentVersionNumber` set BEFORE `renderExportPreview()` (was after, causing wrong version label)
+- **Subtitle burn-in** (`backend/services/render.py`):
+  - Added `_parse_srt_time()` — parses SRT timestamp `00:01:23,456` to seconds
+  - Added `_parse_subtitle_file()` — parses SRT/VTT files into `{start, end, text}` dicts (handles WEBVTT header, HTML tag stripping)
+  - Added `_make_subtitle_overlays()` — creates TextClip overlays from subtitle file, converts absolute times to clip-relative, clamps to boundaries
+  - Integrated subtitle rendering into main render loop (after text overlays, before CompositeVideoClip)
+- All 89 tests pass
+
+---
+
+## v0.9.0 — 2026-03-10T18:30:00Z — Per-Step Execution Animation & Version-Isolated Clip IDs
+
+**User Request:**
+> 1. Pending marks are 'checked' all at once — do it per-step with animation, add a render_video step in plan box
+> 2. After adding transcript, plan executed but clips don't change — propose new clip IDs per version for rollback support
+
+**Changes Made:**
+- **Per-step animation** (`frontend/js/app.js`):
+  - Added `sleep(ms)` helper function
+  - `renderPlanBox()` and `renderPlanBoxExecuted()` now include a `render_video` step (separated visually from tool steps)
+  - `executePlan()` iterates `step_results` with 300ms delay between each step's status update (pending -> completed/failed)
+  - Render step animates to completed after all tool steps finish
+  - On failure, render step also shown as failed
+- **Render step CSS** (`frontend/css/style.css`):
+  - Added `.step-render-item` with top border separator and margin
+- **Version-isolated clip IDs** (`backend/services/execute.py`):
+  - After `recompute_timeline()`, regenerates all clip IDs as `clip-{uuid4_hex[:8]}` for version isolation
+  - Each executed version gets brand new clip objects, supporting future rollback features
+- Version bump to v0.9.0
+- All 89 tests pass
+
+---

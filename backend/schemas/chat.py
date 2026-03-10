@@ -23,7 +23,16 @@ class ChatResponse(BaseModel):
     version_number: int
 
 
+class StepResult(BaseModel):
+    step_number: int
+    tool_name: str
+    status: str  # "completed" | "failed"
+    error: str | None = None
+
+
 class ExecuteResponse(BaseModel):
     message: str
     version_number: int
     timeline: dict | None = None
+    step_results: list[StepResult] = []
+    success: bool = True

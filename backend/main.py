@@ -18,7 +18,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Video Edit Agent",
     description="Upload and edit videos using natural language",
-    version="0.6.4",
+    version="0.9.0",
     lifespan=lifespan,
 )
 

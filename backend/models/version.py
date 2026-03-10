@@ -15,6 +15,7 @@ class ProjectVersion(Base):
     version_number: Mapped[int] = mapped_column(Integer, nullable=False)
     timeline_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     is_current: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    executed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     project: Mapped["Project"] = relationship(back_populates="versions")  # noqa: F821

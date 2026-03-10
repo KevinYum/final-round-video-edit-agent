@@ -21,11 +21,16 @@ async def get_current_version(project_id: str, db: AsyncSession) -> ProjectVersi
 
 
 async def ensure_version(project_id: str, timeline: dict | None, db: AsyncSession) -> ProjectVersion:
-    """Get current version or create version 1 if none exists."""
+    """Get current version or create one if none exists / current was executed."""
     version = await get_current_version(project_id, db)
-    if version:
+    if version and not version.executed:
         return version
 
+    # Current version was executed — create a new version for the next conversation
+    if version and version.executed:
+        return await create_new_version(project_id, copy.deepcopy(timeline), db)
+
+    # No version at all — create version 1
     version = ProjectVersion(
         project_id=project_id,
         version_number=1,
@@ -46,13 +51,18 @@ async def create_new_version(
         select(ProjectVersion)
         .where(ProjectVersion.project_id == project_id)
         .order_by(ProjectVersion.version_number.desc())
+        .limit(1)
     )
     latest = result.scalar_one_or_none()
     next_number = (latest.version_number + 1) if latest else 1
 
-    # Un-mark current
-    if latest and latest.is_current:
-        latest.is_current = False
+    # Un-mark all current versions
+    cur_result = await db.execute(
+        select(ProjectVersion)
+        .where(ProjectVersion.project_id == project_id, ProjectVersion.is_current == True)  # noqa: E712
+    )
+    for v in cur_result.scalars().all():
+        v.is_current = False
 
     new_version = ProjectVersion(
         project_id=project_id,
