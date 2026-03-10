@@ -80,10 +80,10 @@ async def test_chat_does_not_create_version(client: AsyncClient):
     assert res.status_code == 200
     assert res.json()["version_number"] == 1
 
-    # Only version 1 exists (no extra version from chat)
+    # v0 + v1 exist (v0 is initial snapshot, v1 is current)
     versions_res = await client.get("/api/projects/no-ver-test/versions")
     versions = versions_res.json()
-    assert len(versions) == 1
+    assert len(versions) == 2
 
 
 async def test_chat_needs_clarification(client: AsyncClient):
@@ -115,9 +115,9 @@ async def test_chat_conversation_persists(client: AsyncClient):
             json={"message": "second message"},
         )
 
-    # Check version detail has all messages
+    # Check version detail has all messages (v1 is the current working version, v0 is initial snapshot)
     versions_res = await client.get("/api/projects/history-test/versions")
-    v = versions_res.json()[0]
+    v = next(v for v in versions_res.json() if v["version_number"] == 1)
     detail_res = await client.get(f"/api/projects/history-test/versions/{v['version_number']}")
     messages = detail_res.json()["messages"]
     assert len(messages) == 4  # 2 user + 2 assistant
@@ -341,9 +341,9 @@ async def test_execute_plan(client: AsyncClient):
     # Verify version 1 is still current and marked as executed
     versions_res = await client.get("/api/projects/exec-test/versions")
     versions = versions_res.json()
-    assert len(versions) == 1
-    assert versions[0]["is_current"] is True
-    assert versions[0]["executed"] is True
+    assert len(versions) == 2  # v0 + v1
+    assert versions[1]["is_current"] is True
+    assert versions[1]["executed"] is True
 
 
 async def test_execute_step_failure(client: AsyncClient):

@@ -29,4 +29,10 @@ class VersionDetailOut(VersionOut):
 
 
 class RevertRequest(BaseModel):
-    version_number: int = Field(..., ge=1)
+    version_number: int = Field(..., ge=0)
+
+
+class RollbackResponse(BaseModel):
+    message: str
+    version_number: int
+    timeline: dict | None = None

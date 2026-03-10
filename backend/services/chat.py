@@ -7,6 +7,7 @@ from sqlalchemy import select
 from backend.models.project import Project
 from backend.schemas.chat import ChatResponse, EditPlan, ToolStep
 from backend.services import llm as llm_service
+from backend.services import metrics as metrics_service
 from backend.services import version as version_service
 from backend.services.tools import validate_plan
 
@@ -55,7 +56,11 @@ async def handle_chat(
         for a in project.assets
     ]
 
-    # 5. Call LLM with current plan as explicit context
+    # 5. Increment total edit requests (once per version, on first message only)
+    if not history:
+        await metrics_service.increment("total_edit_requests", db)
+
+    # 6. Call LLM with current plan as explicit context
     llm_result = await llm_service.call_llm(
         project_id=project_id,
         aspect_ratio=project.target_aspect_ratio,
@@ -67,7 +72,12 @@ async def handle_chat(
         current_plan=current_plan,
     )
 
-    # 6. Parse edit plan
+    # Record LLM latency
+    latency_ms = llm_result.pop("_latency_ms", None)
+    if latency_ms is not None:
+        await metrics_service.record_latency(latency_ms, db)
+
+    # 7. Parse edit plan
     edit_plan = None
     raw_plan = llm_result.get("edit_plan")
     if raw_plan and isinstance(raw_plan, dict):
@@ -99,7 +109,10 @@ async def handle_chat(
             edit_plan = None
             needs_clarification = True
 
-    # 7. Store conversation messages
+    if needs_clarification:
+        await metrics_service.increment("clarification_count", db)
+
+    # 8. Store conversation messages
     edit_plan_dict = edit_plan.model_dump() if edit_plan else None
 
     await version_service.add_message(

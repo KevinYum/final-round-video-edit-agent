@@ -76,6 +76,8 @@ Every user request must be logged in `INSTRUCTIONS.md` with:
 | `GET` | `/api/projects/{project_id}/versions` | List timeline versions |
 | `GET` | `/api/projects/{project_id}/versions/{num}` | Get version detail with messages |
 | `POST` | `/api/projects/{project_id}/versions/revert` | Revert to a previous version |
+| `POST` | `/api/projects/{project_id}/rollback` | Rollback to previous version (destructive) |
+| `GET` | `/api/metrics` | Get global metrics (singleton) |
 
 ### Database Schema (SQLite)
 - **projects**: id (string PK), target_aspect_ratio, language, timeline (JSON), transcript (JSON), status, created_at, updated_at
@@ -83,6 +85,7 @@ Every user request must be logged in `INSTRUCTIONS.md` with:
 - **project_edit_jobs**: id, project_id (FK), prompt, status, timeline_before (JSON), timeline_after (JSON), error_message, created_at, completed_at
 - **project_versions**: id, project_id (FK), version_number, timeline_snapshot (JSON), is_current (bool), executed (bool), created_at
 - **conversation_messages**: id, version_id (FK), role, content, edit_plan (JSON), needs_clarification (bool), sequence_number, created_at
+- **global_metrics**: id (int PK, always 1), total_projects, total_edit_requests, successful_edit_requests, total_llm_calls, cumulative_latency_ms, clarification_count, export_count, undo_or_recovery_count
 
 ### Timeline JSON Structure (Clip-Sequence Model)
 The timeline represents the final output as an ordered list of clips. Each clip references a source asset with in/out points and a position on the output timeline.
@@ -210,9 +213,11 @@ This allows the LLM to see its own prior plans and iterate on them based on user
 
 ### Version System
 - Each project has versions (timeline snapshots) with an `executed` flag
+- Version 0 is created automatically when the first chat starts — it captures the initial timeline before any edits
 - Execute updates the current version in-place (sets `executed=True`), does NOT create a new version
 - New version is created lazily: when the next chat message arrives, `ensure_version()` detects the current version is executed and creates a new one
 - This means: chat on v2, execute on v2, next chat creates v3 — version number stays stable during execution
 - Conversation messages are scoped to the current version session
 - After execution, frontend shows executed plan with checkmarks and rendered video preview
-- Reverting restores the project timeline to a previous snapshot
+- **Rollback** (`POST /rollback`): destructively reverts from current version N to N-1, deletes all versions > N-1 (cascade deletes messages), restores timeline from N-1's snapshot, cleans up export caches. Version 0 cannot be rolled back further (returns 400).
+- Reverting (`POST /versions/revert`): switches `is_current` to a target version without deleting anything

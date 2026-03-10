@@ -515,3 +515,64 @@ It serves as a complete history of how this project was created and evolved.
 - All 89 tests pass
 
 ---
+
+## v1.0.0 — 2026-03-10T19:00:00Z — Project-wise Version Rollback
+
+**User Request:**
+> Let's do next api, which is project wise rollback version: it shows a button, when click it will first prompt a second confirmation, if confirmed, all timeline preview plan chat history should come back to last version. If anything that should be versioned is not currently versioned you can redesign the model. Special case is version 0 cannot further rollback.
+
+**Changes Made:**
+- **Version 0 creation** (`backend/services/version.py`):
+  - `ensure_version()` now creates v0 (initial timeline snapshot, `executed=True`) alongside v1 on first chat
+  - v0 serves as the rollback target when undoing the first edit
+- **Rollback service** (`backend/services/version.py`):
+  - Added `rollback(project_id, db)` — finds current version N, deletes versions > N-1 (cascade deletes messages), restores target version N-1 as current
+  - Raises `ValueError` if at v0 or no versions exist
+- **Rollback endpoint** (`backend/routers/versions.py`):
+  - Added `POST /api/projects/{project_id}/rollback` — no request body needed
+  - Returns `RollbackResponse(message, version_number, timeline)`
+  - 400 on v0 rollback attempt, 404 on project not found
+  - Cleans up stale export caches for deleted versions
+- **Schema** (`backend/schemas/version.py`):
+  - Added `RollbackResponse` model
+- **Frontend** (`frontend/js/app.js`):
+  - Added rollback button next to version badge (orange/amber styling)
+  - `rollbackVersion()` shows `confirm()` dialog, calls `POST /rollback`, reloads timeline/preview/chat/plan
+  - Button disabled at v0, hidden when no versions
+- **CSS** (`frontend/css/style.css`):
+  - Added `.rollback-btn` styles (amber theme, disabled state)
+- **Tests** (`tests/test_versions_api.py`):
+  - Added 5 rollback tests: v1→v0, v0 returns 400, deletes later versions, no versions, project not found
+  - Updated existing version count assertions for v0 creation (1→2, 2→3)
+- **Tests** (`tests/test_chat_api.py`):
+  - Updated version count assertions for v0 creation
+- Updated CLAUDE.md — added rollback endpoint to API spec, updated version system docs
+- Version bump to v1.0.0
+
+---
+
+## v1.1.0 — 2026-03-10T12:00:00Z — Global Metrics Dashboard
+
+**User Request:**
+> Expose or print metrics: total_projects, total_edit_requests, successful_edit_requests, avg_agent_latency_ms, clarification_count, export_count, undo_or_recovery_count. In frontend add those in the bottom. Adding them to database. Adding hooks to update them.
+
+**Changes Made:**
+- **Model** (`backend/models/metrics.py`): New `GlobalMetrics` singleton model with counter columns + cumulative latency tracking
+- **Schema** (`backend/schemas/metrics.py`): `MetricsOut` response model (avg_agent_latency_ms computed on read)
+- **Service** (`backend/services/metrics.py`): `increment()`, `record_latency()`, `get_metrics()` helpers
+- **Router** (`backend/routers/metrics.py`): `GET /api/metrics` endpoint
+- **Hooks** added at 7 locations:
+  - `backend/routers/projects.py` — total_projects (create), export_count (export)
+  - `backend/services/llm.py` — LLM call latency measurement (time.monotonic)
+  - `backend/services/chat.py` — total_edit_requests, clarification_count, latency recording
+  - `backend/services/execute.py` — successful_edit_requests
+  - `backend/routers/versions.py` — undo_or_recovery_count (revert + rollback)
+- **Frontend** (`frontend/index.html`): Added `<footer id="metrics-bar">` with 7 metric cards
+- **Frontend** (`frontend/css/style.css`): Fixed footer bar styles (dark theme, purple accent)
+- **Frontend** (`frontend/js/app.js`): `loadMetrics()` function, called on page load + after create/chat/execute/export/rollback
+- **Tests** (`tests/test_metrics_api.py`): 8 tests covering all metrics
+- **Fix**: Updated `RevertRequest.version_number` from `ge=1` to `ge=0` (v0 now exists)
+- Updated CLAUDE.md — added `/api/metrics` to API spec, `global_metrics` to DB schema
+- Version bump to v1.1.0
+
+---

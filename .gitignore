@@ -23,9 +23,6 @@ storage/*.db
 .DS_Store
 Thumbs.db
 
-# Test files (binary samples for manual testing)
-test_files/
-
 # Environment
 .env
 

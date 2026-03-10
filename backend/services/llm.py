@@ -2,6 +2,7 @@
 
 import json
 import logging
+import time
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
@@ -61,6 +62,11 @@ Analyze the user's new editing request and respond with a JSON object. You must 
 - Parameter values must be concrete: use actual clip IDs, asset IDs, and numeric values from the timeline/assets. Never use placeholders.
 - `params` must be directly executable — they will be passed as keyword arguments to tool functions (e.g., `trim_clip(**params)`).
 - If you cannot determine the exact parameter values from the user's request and timeline context, set `needs_clarification` to `true`, set `edit_plan` to `null`, and ask clarifying questions in `assistant_message`.
+- NEVER guess or assume ambiguous parameter values. If the user's instruction has multiple valid interpretations, you MUST set `needs_clarification` to `true` and ask. Examples of ambiguity that require clarification:
+  - "Trim to 3 seconds" → Ask: keep the first 3 seconds or the last 3 seconds?
+  - "Cut the middle" → Ask: what exact start/end timestamps to cut?
+  - "Make it shorter" → Ask: by how much? Which part to remove?
+  - "Add text" → Ask: what text, position, timing, and style?
 - Respond ONLY with the JSON object, no markdown fences or extra text.
 """
 
@@ -170,5 +176,10 @@ async def call_llm(
         temperature=0,
     )
 
+    start = time.monotonic()
     response: AIMessage = await llm.ainvoke(messages)
-    return _parse_llm_response(response.content)
+    elapsed_ms = (time.monotonic() - start) * 1000
+
+    parsed = _parse_llm_response(response.content)
+    parsed["_latency_ms"] = elapsed_ms
+    return parsed

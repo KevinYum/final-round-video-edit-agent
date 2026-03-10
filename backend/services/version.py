@@ -1,14 +1,17 @@
-"""Version management service — list, get detail, revert."""
+"""Version management service — list, get detail, revert, rollback."""
 
 import copy
+import logging
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import flag_modified
 
 from backend.models.project import Project
 from backend.models.version import ConversationMessage, ProjectVersion
+
+logger = logging.getLogger(__name__)
 
 
 async def get_current_version(project_id: str, db: AsyncSession) -> ProjectVersion | None:
@@ -30,7 +33,16 @@ async def ensure_version(project_id: str, timeline: dict | None, db: AsyncSessio
     if version and version.executed:
         return await create_new_version(project_id, copy.deepcopy(timeline), db)
 
-    # No version at all — create version 1
+    # No version at all — create v0 (initial snapshot) + v1 (current working version)
+    v0 = ProjectVersion(
+        project_id=project_id,
+        version_number=0,
+        timeline_snapshot=copy.deepcopy(timeline),
+        is_current=False,
+        executed=True,
+    )
+    db.add(v0)
+
     version = ProjectVersion(
         project_id=project_id,
         version_number=1,
@@ -176,3 +188,46 @@ async def add_message(
     db.add(msg)
     await db.flush()
     return msg
+
+
+async def rollback(project_id: str, db: AsyncSession) -> ProjectVersion:
+    """Rollback to the previous version.
+
+    Deletes all versions after target (cascade deletes their messages),
+    restores the project timeline from the target version's snapshot.
+    Returns the target version. Raises ValueError if at v0 or no versions.
+    """
+    current = await get_current_version(project_id, db)
+    if not current:
+        raise ValueError("No versions exist for this project")
+
+    if current.version_number <= 0:
+        raise ValueError("Cannot rollback past version 0")
+
+    target_number = current.version_number - 1
+
+    # Delete all versions with version_number > target (including current)
+    result = await db.execute(
+        select(ProjectVersion).where(
+            ProjectVersion.project_id == project_id,
+            ProjectVersion.version_number > target_number,
+        )
+    )
+    versions_to_delete = result.scalars().all()
+    deleted_version_numbers = [v.version_number for v in versions_to_delete]
+    for v in versions_to_delete:
+        await db.delete(v)
+
+    await db.flush()
+
+    # Restore target version as current
+    target = await revert_to_version(project_id, target_number, db)
+    if not target:
+        raise ValueError(f"Target version {target_number} not found")
+
+    logger.info(
+        "Rolled back project %s: deleted versions %s, now at v%d",
+        project_id, deleted_version_numbers, target_number,
+    )
+
+    return target

@@ -29,6 +29,7 @@ from backend.services.timeline import (
     add_assets_to_timeline,
     create_empty_timeline,
 )
+from backend.services import metrics as metrics_service
 from backend.services import version as version_service
 
 EXPORT_DIR = ASSET_DIR.parent / "exports"
@@ -56,6 +57,7 @@ async def create_project(
         status="created",
     )
     db.add(project)
+    await metrics_service.increment("total_projects", db)
     await db.commit()
 
     result = await db.execute(
@@ -237,7 +239,7 @@ async def get_timeline(project_id: str, db: AsyncSession = Depends(get_db)) -> T
 
 @router.get("/{project_id}/export")
 async def export_video(
-    project_id: str, db: AsyncSession = Depends(get_db)
+    project_id: str, download: bool = False, db: AsyncSession = Depends(get_db)
 ) -> FileResponse:
     project = await db.get(Project, project_id)
     if not project:
@@ -268,6 +270,10 @@ async def export_video(
             )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
+
+    if download:
+        await metrics_service.increment("export_count", db)
+        await db.commit()
 
     return FileResponse(
         output_path,

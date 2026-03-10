@@ -1,6 +1,6 @@
 [project]
 name = "video-edit-agent"
-version = "0.9.0"
+version = "1.1.0"
 description = "A video editing agent that allows users to upload and edit videos using natural language"
 requires-python = ">=3.13"
 dependencies = [

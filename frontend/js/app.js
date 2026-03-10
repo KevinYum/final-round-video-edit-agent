@@ -2,6 +2,7 @@ const API = "/api/projects";
 
 let currentProjectId = null;
 let currentVersionNumber = null;
+let chatShowingExecutedVersion = false;
 
 // ── Player State ────────────────────────────────────────────────────
 let player = { clips: [], index: 0, totalDuration: 0 };
@@ -217,7 +218,7 @@ async function exportVideo() {
     }
 
     try {
-        const res = await fetch(`${API}/${currentProjectId}/export`);
+        const res = await fetch(`${API}/${currentProjectId}/export?download=1`);
         if (!res.ok) throw new Error(await extractError(res, "Export failed"));
 
         const blob = await res.blob();
@@ -229,6 +230,7 @@ async function exportVideo() {
         a.click();
         a.remove();
         URL.revokeObjectURL(url);
+        loadMetrics();
     } catch (err) {
         alert(`Export failed: ${err.message}`);
     } finally {
@@ -252,6 +254,8 @@ async function loadChatHistory(projectId) {
     if (!current) {
         currentVersionNumber = null;
         badge.hidden = true;
+        const rollbackBtn = document.getElementById("rollback-btn");
+        if (rollbackBtn) rollbackBtn.hidden = true;
         messagesEl.innerHTML = '<p class="empty-state">Send a message to start editing with AI.</p>';
         planBox.innerHTML = '<p class="empty-state">No plan yet. Chat to generate one.</p>';
         return;
@@ -260,6 +264,19 @@ async function loadChatHistory(projectId) {
     currentVersionNumber = current.version_number;
     badge.textContent = `v${current.version_number}`;
     badge.hidden = false;
+
+    // Show rollback button (disabled at v0)
+    let rollbackBtn = document.getElementById("rollback-btn");
+    if (!rollbackBtn) {
+        rollbackBtn = document.createElement("button");
+        rollbackBtn.id = "rollback-btn";
+        rollbackBtn.className = "rollback-btn";
+        rollbackBtn.textContent = "Rollback";
+        rollbackBtn.onclick = rollbackVersion;
+        badge.parentNode.insertBefore(rollbackBtn, badge.nextSibling);
+    }
+    rollbackBtn.disabled = current.version_number <= 0;
+    rollbackBtn.hidden = false;
 
     // Get version detail with messages
     const dRes = await fetch(`${API}/${projectId}/versions/${current.version_number}`);
@@ -271,14 +288,16 @@ async function loadChatHistory(projectId) {
         return;
     }
 
-    // If version was executed, show empty chat, plan with checkmarks, and export preview
+    // If version was executed, show chat history + plan with checkmarks + export preview
     if (current.executed) {
-        messagesEl.innerHTML = '<p class="empty-state">Send a message to start editing with AI.</p>';
+        renderChatMessages(detail.messages);
+        chatShowingExecutedVersion = true;
         renderLatestPlan(detail.messages, true);
         renderExportPreview();
         return;
     }
 
+    chatShowingExecutedVersion = false;
     renderChatMessages(detail.messages);
     renderLatestPlan(detail.messages);
 }
@@ -398,6 +417,7 @@ document.getElementById("create-form").addEventListener("submit", async (e) => {
         document.getElementById("project-id-input").value = "";
         await loadProjects();
         await selectProject(projectId);
+        loadMetrics();
     } catch (err) {
         status.className = "status error";
         status.textContent = `Error: ${err.message}`;
@@ -455,6 +475,12 @@ document.getElementById("chat-form").addEventListener("submit", async (e) => {
     const sendBtn = document.getElementById("chat-send-btn");
     const messagesEl = document.getElementById("chat-messages");
 
+    // Clear old chat when starting a new version after execution
+    if (chatShowingExecutedVersion) {
+        messagesEl.innerHTML = "";
+        chatShowingExecutedVersion = false;
+    }
+
     // Clear empty state if present
     const emptyState = messagesEl.querySelector(".empty-state");
     if (emptyState) emptyState.remove();
@@ -499,6 +525,8 @@ document.getElementById("chat-form").addEventListener("submit", async (e) => {
         if (data.edit_plan && data.edit_plan.steps && data.edit_plan.steps.length > 0 && !data.needs_clarification) {
             renderPlanBox(data.edit_plan);
         }
+
+        loadMetrics();
     } catch (err) {
         messagesEl.insertAdjacentHTML(
             "beforeend",
@@ -562,6 +590,19 @@ async function executePlan() {
             currentVersionNumber = data.version_number;
             const badge = document.getElementById("chat-version-badge");
             badge.textContent = `v${data.version_number}`;
+
+            // Ensure rollback button is visible and enabled
+            let rollbackBtn = document.getElementById("rollback-btn");
+            if (!rollbackBtn) {
+                rollbackBtn = document.createElement("button");
+                rollbackBtn.id = "rollback-btn";
+                rollbackBtn.className = "rollback-btn";
+                rollbackBtn.textContent = "Rollback";
+                rollbackBtn.onclick = rollbackVersion;
+                badge.parentNode.insertBefore(rollbackBtn, badge.nextSibling);
+            }
+            rollbackBtn.disabled = data.version_number <= 0;
+            rollbackBtn.hidden = false;
             if (data.timeline) {
                 renderTimeline(data.timeline);
             }
@@ -607,9 +648,9 @@ async function executePlan() {
                 `<div class="plan-executed">Plan executed (v${data.version_number}).</div>`
             );
 
-            // Clear chat for new version
-            const messagesEl = document.getElementById("chat-messages");
-            messagesEl.innerHTML = '<p class="empty-state">Send a message to start editing with AI.</p>';
+            chatShowingExecutedVersion = true;
+
+            loadMetrics();
         } else {
 
             // Failure: show error but keep plan visible with step statuses
@@ -632,6 +673,48 @@ async function executePlan() {
         if (executeBtn) {
             executeBtn.disabled = false;
             executeBtn.textContent = "Execute Plan";
+        }
+    }
+}
+
+// ── Rollback ────────────────────────────────────────────────────────
+
+async function rollbackVersion() {
+    if (!currentProjectId) return;
+    if (currentVersionNumber <= 0) return;
+
+    if (!confirm(`Rollback from v${currentVersionNumber} to v${currentVersionNumber - 1}? This will delete v${currentVersionNumber} and its chat history.`)) {
+        return;
+    }
+
+    const btn = document.getElementById("rollback-btn");
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = "Rolling back...";
+    }
+
+    try {
+        const res = await fetch(`${API}/${currentProjectId}/rollback`, {
+            method: "POST",
+        });
+        if (!res.ok) throw new Error(await extractError(res, "Rollback failed"));
+
+        const data = await res.json();
+        currentVersionNumber = data.version_number;
+
+        // Reload everything: timeline, preview, chat, plan
+        if (data.timeline) {
+            renderTimeline(data.timeline);
+            renderVideoPreview(data.timeline);
+        }
+        await loadChatHistory(currentProjectId);
+        loadMetrics();
+    } catch (err) {
+        alert(`Rollback failed: ${err.message}`);
+    } finally {
+        if (btn) {
+            btn.textContent = "Rollback";
+            btn.disabled = currentVersionNumber <= 0;
         }
     }
 }
@@ -669,4 +752,24 @@ function formatBytes(bytes) {
     return (bytes / 1048576).toFixed(1) + " MB";
 }
 
+// ── Metrics ─────────────────────────────────────────────────────────
+
+async function loadMetrics() {
+    try {
+        const res = await fetch("/api/metrics");
+        if (!res.ok) return;
+        const m = await res.json();
+        document.getElementById("metric-total-projects").textContent = m.total_projects;
+        document.getElementById("metric-total-edits").textContent = m.total_edit_requests;
+        document.getElementById("metric-successful-edits").textContent = m.successful_edit_requests;
+        document.getElementById("metric-avg-latency").textContent = m.avg_agent_latency_ms.toFixed(0);
+        document.getElementById("metric-clarifications").textContent = m.clarification_count;
+        document.getElementById("metric-exports").textContent = m.export_count;
+        document.getElementById("metric-undo").textContent = m.undo_or_recovery_count;
+    } catch {
+        // Metrics are non-critical — silently ignore errors
+    }
+}
+
 loadProjects();
+loadMetrics();

@@ -9,6 +9,7 @@ body {
     background: #0f0f0f;
     color: #e0e0e0;
     min-height: 100vh;
+    padding-bottom: 60px;
 }
 
 header {
@@ -587,8 +588,87 @@ button:disabled {
     border-top: 1px solid #333;
 }
 
+.rollback-btn {
+    padding: 0.2rem 0.6rem;
+    font-size: 0.7rem;
+    background: #5a3a1a;
+    color: #ffc46f;
+    border: 1px solid #7a5a2a;
+    border-radius: 3px;
+    cursor: pointer;
+    font-weight: 600;
+    margin-left: 0.5rem;
+    vertical-align: middle;
+}
+
+.rollback-btn:hover {
+    background: #7a5a2a;
+}
+
+.rollback-btn:disabled {
+    background: #333;
+    color: #666;
+    border-color: #444;
+    cursor: not-allowed;
+}
+
 .empty-state {
     text-align: center;
     color: #666;
     padding: 2rem;
+}
+
+/* ── Metrics Footer Bar ──────────────────────────────────────────── */
+
+#metrics-bar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    display: flex;
+    justify-content: center;
+    gap: 0;
+    background: #1a1a2e;
+    border-top: 2px solid #6c63ff;
+    padding: 0.5rem 1rem;
+    z-index: 100;
+}
+
+.metrics-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 0.3rem 1rem;
+    border-right: 1px solid #333;
+    min-width: 90px;
+}
+
+.metrics-card:last-child {
+    border-right: none;
+}
+
+.metrics-value {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: #6c63ff;
+    font-family: "SF Mono", Monaco, Consolas, monospace;
+}
+
+.metrics-label {
+    font-size: 0.65rem;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-top: 0.1rem;
+}
+
+@media (max-width: 700px) {
+    #metrics-bar {
+        flex-wrap: wrap;
+        gap: 0.25rem;
+    }
+    .metrics-card {
+        min-width: 70px;
+        padding: 0.2rem 0.5rem;
+    }
 }

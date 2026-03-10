@@ -13,6 +13,7 @@ from backend.database import ASSET_DIR
 from backend.models.project import Asset, Project
 from backend.models.version import ConversationMessage, ProjectVersion
 from backend.schemas.chat import ExecuteResponse, StepResult
+from backend.services import metrics as metrics_service
 from backend.services import version as version_service
 from backend.services.tool_executors import (
     TOOL_REGISTRY,
@@ -174,6 +175,7 @@ async def execute_plan(project_id: str, db: AsyncSession) -> ExecuteResponse:
     current_version.executed = True
     flag_modified(current_version, "timeline_snapshot")
 
+    await metrics_service.increment("successful_edit_requests", db)
     await db.commit()
 
     # Delete stale cached render so export endpoint re-renders with updated timeline

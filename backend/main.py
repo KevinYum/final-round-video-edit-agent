@@ -5,7 +5,7 @@ from fastapi.staticfiles import StaticFiles
 
 from backend.database import engine
 from backend.models import Base
-from backend.routers import chat, projects, versions
+from backend.routers import chat, metrics, projects, versions
 
 
 @asynccontextmanager
@@ -18,11 +18,12 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Video Edit Agent",
     description="Upload and edit videos using natural language",
-    version="0.9.0",
+    version="1.1.0",
     lifespan=lifespan,
 )
 
 app.include_router(projects.router)
 app.include_router(chat.router)
 app.include_router(versions.router)
+app.include_router(metrics.router)
 app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
